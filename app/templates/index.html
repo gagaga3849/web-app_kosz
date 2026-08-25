@@ -1,0 +1,245 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="grid gap-10 lg:grid-cols-[minmax(0,20rem)_1fr]">
+    <section class="rounded-2xl border border-stone-200 bg-[#faf6f1] p-6 shadow-sm">
+      <h1 class="text-2xl font-semibold tracking-tight text-stone-900">{{ t("headline") }}</h1>
+      <p class="mt-3 text-sm leading-6 text-stone-600">{{ t("intro") }}</p>
+
+      {% if error %}
+        <p class="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800" role="alert">{{ error }}</p>
+      {% endif %}
+
+      <!-- AI text parsing input widget -->
+      <div class="mt-6 border-b border-stone-200 pb-6">
+        <label class="block text-sm font-medium text-stone-700 font-semibold mb-1">
+          {{ t("ai_input_title") }}
+          <textarea
+            id="free_text_input"
+            rows="2"
+            placeholder="{{ t('ai_input_placeholder') }}"
+            class="mt-2.5 w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 focus:border-orange-800 focus:ring-1 focus:ring-orange-800 focus:outline-none transition-all duration-200"
+          ></textarea>
+        </label>
+        <button
+          type="button"
+          id="btn_parse_text"
+          class="mt-2 flex w-full items-center justify-center rounded-lg border border-orange-800 bg-white px-4 py-2 text-sm font-semibold text-orange-800 hover:bg-orange-50 focus:outline-none focus:ring-2 focus:ring-orange-800/20 active:bg-orange-100 transition-all duration-200"
+        >
+          <span id="btn_parse_text_text">{{ t("ai_button") }}</span>
+          <svg id="parse_spinner" class="ml-2 hidden h-4 w-4 animate-spin text-orange-800" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+          </svg>
+        </button>
+        <p id="parse_feedback" class="mt-2 hidden text-xs transition-all duration-300"></p>
+      </div>
+
+      <form id="estimate_form_el" class="mt-6 space-y-4" method="post" action="{{ url_for('main.estimate_form') }}">
+        <label class="block text-sm font-medium text-stone-700">
+          {{ t("job_type") }}
+          <select id="field_job_type" name="job_type" class="mt-1 w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-stone-900 focus:border-orange-800 focus:ring-1 focus:ring-orange-800 focus:outline-none transition-all duration-200">
+            {% for job in job_types %}
+              <option value="{{ job.code }}" {% if form.job_type == job.code %}selected{% endif %}>{{ job.name_pl }}</option>
+            {% endfor %}
+          </select>
+        </label>
+
+        <label class="block text-sm font-medium text-stone-700">
+          {{ t("area") }}
+          <input
+            id="field_area_m2"
+            type="number"
+            name="area_m2"
+            min="0.1"
+            step="0.1"
+            required
+            value="{{ form.area_m2 }}"
+            class="mt-1 w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-stone-900 focus:border-orange-800 focus:ring-1 focus:ring-orange-800 focus:outline-none transition-all duration-200"
+          />
+        </label>
+
+        <label class="block text-sm font-medium text-stone-700">
+          {{ t("region") }}
+          <select id="field_region" name="region" class="mt-1 w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-stone-900 focus:border-orange-800 focus:ring-1 focus:ring-orange-800 focus:outline-none transition-all duration-200">
+            {% for region in regions %}
+              <option value="{{ region.region_code }}" {% if form.region == region.region_code %}selected{% endif %}>{{ region.name_pl }}</option>
+            {% endfor %}
+          </select>
+        </label>
+
+        <button type="submit" class="w-full rounded-lg bg-orange-800 px-4 py-2.5 text-sm font-semibold text-white hover:bg-orange-900 transition-all duration-200">
+          {{ t("submit") }}
+        </button>
+      </form>
+    </section>
+
+    <section>
+      {% if estimate %}
+        <div class="rounded-2xl border border-stone-200 bg-white p-6 shadow-sm">
+          <h2 class="text-xl font-semibold">{{ estimate.job_name }}</h2>
+          <p class="mt-2 text-sm text-stone-600">
+            {{ t("dimensions") }}:
+            {{ t("floor") }} {{ estimate.dimensions.floor_m2 }} m² ·
+            {{ t("wall") }} {{ estimate.dimensions.wall_m2 }} m² ·
+            {{ t("perimeter") }} {{ estimate.dimensions.perimeter_m }} m
+          </p>
+
+          {% if estimate.summary %}
+            <div class="mt-4 rounded-xl border border-orange-100 bg-orange-50/40 p-4 text-sm leading-relaxed text-stone-800">
+              <p class="font-semibold text-orange-900 mb-1 flex items-center gap-1">
+                <svg class="h-4 w-4 text-orange-700" fill="currentColor" viewBox="0 0 20 20">
+                  <path d="M11 3a1 1 0 10-2 0v1a1 1 0 102 0V3zM15.657 5.757a1 1 0 00-1.414-1.414l-.707.707a1 1 0 001.414 1.414l.707-.707zM18 10a1 1 0 01-1 1h-1a1 1 0 110-2h1a1 1 0 011 1zM5.05 6.464a1 1 0 10-1.414-1.414l-.707.707a1 1 0 001.414 1.414l.707-.707zM5 10a1 1 0 01-1 1H3a1 1 0 110-2h1a1 1 0 011 1zM8 16v-1a1 1 0 112 0v1a1 1 0 11-2 0zM5.657 14.343a1 1 0 10-1.414-1.414l-.707.707a1 1 0 101.414 1.414l.707-.707zM14.343 15.657a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414l.707.707zM10 7a3 3 0 100 6 3 3 0 000-6z" />
+                </svg>
+                Podsumowanie AI
+              </p>
+              {{ estimate.summary }}
+            </div>
+          {% endif %}
+
+          <h3 class="mt-8 text-sm font-semibold uppercase tracking-wide text-orange-800">{{ t("sequence") }}</h3>
+          <ol class="mt-3 list-decimal space-y-1 pl-5 text-sm text-stone-700">
+            {% for step in estimate.sequence %}
+              <li>{{ step.name }}</li>
+            {% endfor %}
+          </ol>
+
+          {% macro lines_table(title, rows) %}
+            <h3 class="mt-8 text-sm font-semibold uppercase tracking-wide text-orange-800">{{ title }}</h3>
+            <div class="mt-3 overflow-x-auto">
+              <table class="min-w-full text-left text-sm">
+                <thead class="border-b border-stone-200 text-stone-500">
+                  <tr>
+                    <th class="py-2 pr-3 font-medium">{{ t("item") }}</th>
+                    <th class="py-2 pr-3 font-medium">{{ t("qty") }}</th>
+                    <th class="py-2 pr-3 font-medium">{{ t("unit") }}</th>
+                    <th class="py-2 pr-3 font-medium">{{ t("unit_price") }}</th>
+                    <th class="py-2 font-medium">{{ t("line_total") }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in rows %}
+                    <tr class="border-b border-stone-100">
+                      <td class="py-2 pr-3">{{ row.name }}</td>
+                      <td class="py-2 pr-3 tabular-nums">{{ row.quantity }}</td>
+                      <td class="py-2 pr-3">{{ row.unit }}</td>
+                      <td class="py-2 pr-3 tabular-nums">{{ row.unit_price }} {{ row.currency }}</td>
+                      <td class="py-2 tabular-nums">{{ row.total }} {{ row.currency }}</td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          {% endmacro %}
+
+          {{ lines_table(t("materials"), estimate.materials) }}
+          {{ lines_table(t("works"), estimate.works) }}
+
+          <dl class="mt-8 space-y-2 border-t border-stone-200 pt-4 text-sm">
+            <div class="flex justify-between text-stone-600">
+              <dt>{{ t("materials_total") }}</dt>
+              <dd class="tabular-nums">{{ estimate.materials_total }} {{ estimate.currency }}</dd>
+            </div>
+            <div class="flex justify-between text-stone-600">
+              <dt>{{ t("works_total") }}</dt>
+              <dd class="tabular-nums">{{ estimate.works_total }} {{ estimate.currency }}</dd>
+            </div>
+            <div class="flex justify-between text-lg font-semibold text-stone-900">
+              <dt>{{ t("total") }}</dt>
+              <dd class="tabular-nums">{{ estimate.total_price }} {{ estimate.currency }}</dd>
+            </div>
+            <div class="flex justify-between text-stone-600">
+              <dt>{{ t("duration") }}</dt>
+              <dd>{{ estimate.estimated_duration_days }} {{ t("days") }}</dd>
+            </div>
+          </dl>
+        </div>
+      {% endif %}
+    </section>
+  </div>
+
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      const freeTextInput = document.getElementById("free_text_input");
+      const btnParseText = document.getElementById("btn_parse_text");
+      const btnParseTextText = document.getElementById("btn_parse_text_text");
+      const parseSpinner = document.getElementById("parse_spinner");
+      const parseFeedback = document.getElementById("parse_feedback");
+
+      const fieldJobType = document.getElementById("field_job_type");
+      const fieldAreaM2 = document.getElementById("field_area_m2");
+      const fieldRegion = document.getElementById("field_region");
+
+      if (!btnParseText) return;
+
+      btnParseText.addEventListener("click", async () => {
+        const text = freeTextInput.value.trim();
+        if (!text) {
+          parseFeedback.textContent = "Wpisz opis zlecenia przed kliknięciem.";
+          parseFeedback.className = "mt-2 text-xs text-red-600 font-medium";
+          parseFeedback.classList.remove("hidden");
+          return;
+        }
+
+        // Show parsing status
+        btnParseText.disabled = true;
+        btnParseTextText.textContent = "{{ t('ai_parsing') }}";
+        parseSpinner.classList.remove("hidden");
+        parseFeedback.classList.add("hidden");
+
+        try {
+          const response = await fetch("/api/parse_text", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ text }),
+          });
+
+          if (!response.ok) {
+            throw new Error("HTTP error " + response.status);
+          }
+
+          const result = await response.json();
+
+          if (result.confidence) {
+            // Update fields
+            if (result.job_type && fieldJobType) {
+              fieldJobType.value = result.job_type;
+              fieldJobType.classList.add("ring-2", "ring-green-500", "bg-green-50");
+              setTimeout(() => fieldJobType.classList.remove("ring-2", "ring-green-500", "bg-green-50"), 3000);
+            }
+            if (result.area_m2 && fieldAreaM2) {
+              fieldAreaM2.value = result.area_m2;
+              fieldAreaM2.classList.add("ring-2", "ring-green-500", "bg-green-50");
+              setTimeout(() => fieldAreaM2.classList.remove("ring-2", "ring-green-500", "bg-green-50"), 3000);
+            }
+            if (result.region && fieldRegion) {
+              fieldRegion.value = result.region;
+              fieldRegion.classList.add("ring-2", "ring-green-500", "bg-green-50");
+              setTimeout(() => fieldRegion.classList.remove("ring-2", "ring-green-500", "bg-green-50"), 3000);
+            }
+
+            parseFeedback.textContent = "{{ t('ai_success') }}";
+            parseFeedback.className = "mt-2 text-xs text-green-700 font-medium bg-green-50 border border-green-200 px-3 py-2 rounded-lg";
+            parseFeedback.classList.remove("hidden");
+          } else {
+            // Low confidence fallback
+            parseFeedback.textContent = "{{ t('ai_error') }}";
+            parseFeedback.className = "mt-2 text-xs text-red-700 font-medium bg-red-50 border border-red-200 px-3 py-2 rounded-lg";
+            parseFeedback.classList.remove("hidden");
+          }
+        } catch (error) {
+          console.error("Error parsing free text:", error);
+          parseFeedback.textContent = "Błąd komunikacji z serwerem. Spróbuj ponownie lub uzupełnij pola ręcznie.";
+          parseFeedback.className = "mt-2 text-xs text-red-700 font-medium bg-red-50 border border-red-200 px-3 py-2 rounded-lg";
+          parseFeedback.classList.remove("hidden");
+        } finally {
+          btnParseText.disabled = false;
+          btnParseTextText.textContent = "{{ t('ai_button') }}";
+          parseSpinner.classList.add("hidden");
+        }
+      });
+    });
+  </script>
+{% endblock %}

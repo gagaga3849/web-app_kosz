@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="{{ locale }}">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{% block title %}{{ t("site_title") }}{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='output.css') }}" />
+  </head>
+  <body class="min-h-screen bg-stone-100 text-stone-900 antialiased">
+    <header class="border-b border-stone-200 bg-[#faf6f1]">
+      <div class="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
+        <p class="text-sm font-semibold tracking-wide text-orange-800">{{ t("site_title") }}</p>
+        <p class="text-xs uppercase tracking-widest text-stone-500">PLN · {{ t("lang_name") }}</p>
+      </div>
+    </header>
+    <main class="mx-auto max-w-5xl px-6 py-10">
+      {% block content %}{% endblock %}
+    </main>
+  </body>
+</html>

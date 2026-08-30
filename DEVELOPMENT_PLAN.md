@@ -12,12 +12,12 @@ Companion file to `project.md` (master prompt). Drop this in the repo root or `.
 
 **Goal:** empty but runnable skeleton, nothing functional yet.
 
-- [ ] Flask app factory pattern (`app/__init__.py`, `create_app()`)
-- [ ] `.env` handling (python-dotenv), `.env.example` committed, real `.env` gitignored
-- [ ] SQLite for local dev, config flag to switch to PostgreSQL later
-- [ ] Tailwind standalone CLI wired up: `input.css` → watch → `static/output.css`, base Jinja layout (`base.html`) linking it
-- [ ] One dummy route (`/`) rendering a "hello" page through the Tailwind-styled layout, to confirm the whole chain works
-- [ ] `requirements.txt`, `README.md` with setup steps (clone, venv, install, run)
+- [x] Flask app factory pattern (`app/__init__.py`, `create_app()`)
+- [x] `.env` handling (python-dotenv), `.env.example` committed, real `.env` gitignored
+- [x] SQLite for local dev (`DATABASE_URL` config flag; Postgres swap is a URL change, no code change needed)
+- [x] Tailwind wired up via `@tailwindcss/cli` (npx-based, not a standalone binary — deviates slightly from the original "no Node pipeline" plan, but works and is low-friction; revisit only if npm becomes a real pain point), `input.css` → `static/output.css`, `base.html` layout linking it
+- [x] Real route (`/`) — went straight to the actual estimate form rather than a throwaway hello-page, which is fine since Phase 1's engine already existed to back it
+- [x] `requirements.txt`, `README.md` with setup steps
 
 **Definition of done:** `flask run` serves a styled page locally with zero manual steps beyond what's in the README.
 
@@ -27,11 +27,11 @@ Companion file to `project.md` (master prompt). Drop this in the repo root or `.
 
 **Goal:** prove the domain logic works, in isolation, before touching any interface.
 
-- [ ] DB schema: `materials`, `works`, `work_norms` (consumption per m², labor time per unit), `regional_coefficients` (stub, PL only for now)
-- [ ] Seed data: hardcoded PL price data for **one job type only** — bathroom tile installation (floor + walls). 10–15 materials, 3–5 work items.
-- [ ] Pure Python calculation function: given `{job_type, area_m2, region}` → returns structured estimate `{materials: [...], works: [...], total_price, estimated_duration_days, sequence: [...]}`. No LLM involved anywhere in this function.
-- [ ] Unit tests covering the 4 m² bathroom tile case with known expected output
-- [ ] `flask shell` or a small script to call the function directly and print the result — no HTTP layer needed yet to validate this phase
+- [x] DB schema: `JobType`, `Material`, `Work`, `WorkNorm`, `RegionalCoefficient` (PL only seeded so far)
+- [x] Seed data: bathroom tile installation, fully priced (floor + walls + prep/hydro/grout sequence)
+- [x] Pure Python calculation function (`app/calculator.py::calculate_estimate`) — deterministic, no LLM, no network; returns materials, works, totals, duration, sequence
+- [x] Unit tests for the 4 m² bathroom tile case (`tests/test_calculator.py`) — passing, including an invalid-area/unknown-job/unknown-region error-path test (one stale assertion fixed 2026-08-25: test referenced `job_type="painting"` as an "unknown" example, but painting was seeded as part of Phase 4 — swapped to a genuinely nonexistent code)
+- [x] `flask estimate` CLI command (`app.cli.command`) prints the fixture without going through HTTP
 
 **Definition of done:** running the calculation function against the 4 m² tile test case produces a correct, sane estimate, verified by a passing test — entirely without a browser or API call.
 
@@ -41,10 +41,10 @@ Companion file to `project.md` (master prompt). Drop this in the repo root or `.
 
 **Goal:** expose Phase 1's engine through a form a human can actually use.
 
-- [ ] `POST /api/estimate` — accepts structured JSON (`job_type`, `area_m2`, `region`), calls the Phase 1 function, returns JSON
-- [ ] Web form (Jinja + Tailwind) on `/` or `/estimate` — dropdown for job type (just tile for now), number input for area, submits to the API, renders the returned estimate as a readable table
-- [ ] i18n scaffolding: wrap all user-facing strings (Flask-Babel or a simple dict-based approach), default locale `pl`, structure ready for `uk` later even though only `pl` strings exist yet
-- [ ] Basic error handling: invalid area, unknown job type → clear message, not a stack trace
+- [x] `POST /api/estimate` — verified manually: valid input returns full JSON estimate, unknown job type returns `400` with a clear Polish error message, not a stack trace
+- [x] Web form (Jinja + Tailwind) on `/`, posts to `/estimate`, renders the estimate as a readable table
+- [x] i18n scaffolding (`app/i18n.py`, simple dict-based `t(key, locale)`) — only `pl` strings exist, falls back to `uk` then `pl` by design, ready for Phase 7
+- [x] Error handling confirmed end-to-end via curl (see verification log below)
 
 **Definition of done:** a person can open the site, fill the form for a 4 m² bathroom tile job, and see a readable estimate in PLN — full round trip through the browser.
 
@@ -54,9 +54,9 @@ Companion file to `project.md` (master prompt). Drop this in the repo root or `.
 
 **Goal:** accept natural language ("tile my bathroom, 4 square meters") instead of a rigid form.
 
-- [ ] One cheap LLM call: free text → structured JSON (`job_type`, `area_m2`, region if mentioned). Validate/clamp the output before passing it to the Phase 1 engine — never trust the LLM's numbers directly for anything the calculation engine should own.
-- [ ] Fallback to the Phase 2 form if parsing fails or confidence is low — always give the user a way to correct fields manually
-- [ ] Second cheap LLM call (optional at this stage): turn the structured estimate into a short natural-language summary alongside the table — table stays the source of truth, LLM text is a friendly wrapper
+- [x] `POST /api/parse_text` (`app/llm.py::parse_free_text`) — Gemini 2.5 Flash with a Pydantic-validated response schema (`ParseResult`), `confidence` flag, `temperature=0.0`. Confirmed the calculation engine never receives raw LLM numbers unvalidated — `job_type`/`region` are matched strictly against DB-sourced valid codes passed into the prompt.
+- [x] Graceful fallback: no `GEMINI_API_KEY` set → returns `confidence: false` with nulls instead of crashing (verified via curl); UI still has the manual form as a fallback
+- [x] `generate_estimate_summary` — second cheap LLM call, friendly PL summary appended to the estimate response; table/JSON stays the source of truth
 
 **Definition of done:** typing the example sentence in a text box produces the same correct estimate as the Phase 2 form, with the option to review/edit the parsed fields before confirming.
 
@@ -66,9 +66,9 @@ Companion file to `project.md` (master prompt). Drop this in the repo root or `.
 
 **Goal:** go beyond the single tile use case, still PL-only.
 
-- [ ] Add 2–3 more common job types (e.g. painting walls, laying laminate flooring, drywall partition)
-- [ ] Extend `work_norms` and seed data accordingly
-- [ ] Confirm the calculation engine and form/API scale to multiple job types without rewrites (if they don't, refactor before adding more data)
+- [x] Added `painting` and `laminate_flooring` alongside `bathroom_tiling` (3 job types total)
+- [x] `work_norms` extended per job type (each with its own materials/works/sequence)
+- [x] Confirmed the calculation engine scales without changes — `calculate_estimate` is fully data-driven off `JobType`/`WorkNorm`, no per-job-type branching in code
 
 **Definition of done:** at least 3 distinct job types produce correct estimates through the same pipeline.
 
@@ -78,10 +78,10 @@ Companion file to `project.md` (master prompt). Drop this in the repo root or `.
 
 **Goal:** replace hardcoded seed prices with a maintained pipeline, still entirely offline from the user's perspective.
 
-- [ ] Scripted import from Sekocenbud data (manual quarterly download → parser → DB upsert) — start manual/semi-automated, not a live agent
-- [ ] Manual retail markup table layered on top of base Sekocenbud prices (config file or admin-editable DB table)
-- [ ] Document the update cadence (quarterly for Sekocenbud, monthly for retail markup) in `README.md`
-- [ ] (Only if genuinely needed later) evaluate a scheduled CrewAI job for supplementary retail price checks — runs on a cron, never on the request path
+- [x] Scripted import (`scripts/sync_prices.py`) — reads a Sekocenbud-style CSV + a JSON markup config, upserts `base_price`/`markup_multiplier`/`unit_price`(or `labor_rate`) by code. Idempotent, `--dry-run` supported, unknown codes reported and skipped (never auto-created).
+- [x] Manual retail markup layered on top of base price (`data/retail_markup.json` — `default` + per-code `overrides`), separate columns on `Material`/`Work` (`base_price`, `markup_multiplier`) so the calculation engine still just reads `unit_price`/`labor_rate` — no change to `app/calculator.py`.
+- [x] Update cadence documented in `data/README.md`: Sekocenbud quarterly, retail markup monthly.
+- [ ] (Deferred, not needed yet) scheduled CrewAI job for supplementary retail price checks — no real Sekocenbud subscription exists yet, so there's nothing to supplement. Revisit once Phase 5's manual pipeline is actually in use with real data.
 
 **Definition of done:** prices in the DB can be refreshed by running one documented command/script, without touching application code.
 
@@ -121,6 +121,27 @@ Companion file to `project.md` (master prompt). Drop this in the repo root or `.
 - [ ] Everything past this point (payments, contractor accounts, subscriptions) is deliberately out of scope until there's real user traffic to justify it
 
 **Definition of done:** a lead submitted through the site is retrievable and reviewable by the project owner — nothing more elaborate yet.
+
+---
+
+## Status log
+
+**2026-08-25 — audit of existing code against this plan.** Repo already had Phases 0–4 substantially implemented before this session. Findings:
+
+- All 8 tests passed except one: `tests/test_calculator.py::test_invalid_area_and_unknown_job` used `job_type="painting"` as a stand-in for "unknown job type," but Phase 4 had since made `painting` a real seeded job — the test no longer exercised the branch it claimed to. Fixed by swapping to a genuinely nonexistent code (`nonexistent_job`). This was a stale-test issue, not a calculator bug — the actual unknown-job-type validation in `calculate_estimate` was correct.
+- `.gitignore` referenced `static/css/output.css`, but the real Tailwind build output is `static/output.css` (see `package.json`). The mismatch meant the generated CSS file was untracked-but-not-ignored — annoying, not breaking. Fixed the path and added `instance/` and `*.db`.
+- `.env.example` didn't mention `GEMINI_API_KEY`, even though `app/llm.py` reads it. Added it as an optional var with a one-line note on the free tier.
+- `README.md` still described the project as an "empty starter." Updated to reflect the actual current functionality and added a `pytest` section.
+- Manually verified end-to-end: `GET /`, `POST /api/estimate` (valid input, and a 400 with a clear message for an unknown job type), `POST /api/parse_text` (graceful `confidence: false` fallback with no API key set).
+
+Net result: Phases 0–4 are genuinely done, not just checked off. Next open item is **Phase 5 (offline price sync)** — currently all prices are hardcoded in `app/seed.py`, which is fine for continued development but is the next real gap before this could hold real Sekocenbud-sourced pricing.
+
+**2026-08-25 (later) — Phase 5 built and verified.** Added `Material.base_price`/`markup_multiplier` and `Work.base_price`/`markup_multiplier` columns, `scripts/sync_prices.py`, `data/sekocenbud_sample.csv` (placeholder — see `data/README.md`, no real Sekocenbud subscription yet), `data/retail_markup.json`, and `tests/test_price_sync.py`. Two real bugs surfaced and were fixed during verification, not just left as TODOs:
+
+- `base_price` was originally 2 decimal places, which lost precision on the divide-then-multiply round trip (e.g. dividing 12.00 by 1.15, rounding to 2dp, then multiplying back didn't reliably return 12.00). Widened to 4 decimal places on both models and regenerated the sample CSV — verified zero round-trip mismatches across all 29 seeded codes.
+- Running `python scripts/sync_prices.py` directly failed with `ModuleNotFoundError: No module named 'app'` — Python only adds the script's own directory to `sys.path`, not the repo root. Fixed by inserting the repo root into `sys.path` at the top of the script.
+
+Manually verified via CLI (not just pytest): `--dry-run` writes nothing, a real run commits and updates 29 records, and a CSV with an unrecognized code is skipped and reported rather than crashing or silently creating a new row.
 
 ---
 

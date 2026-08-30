@@ -56,6 +56,6 @@ def test_invalid_area_and_unknown_job(tmp_path):
         with pytest.raises(EstimateError):
             calculate_estimate(job_type="bathroom_tiling", area_m2="0", region="pl")
         with pytest.raises(EstimateError):
-            calculate_estimate(job_type="painting", area_m2="4", region="pl")
+            calculate_estimate(job_type="nonexistent_job", area_m2="4", region="pl")
         with pytest.raises(EstimateError):
             calculate_estimate(job_type="bathroom_tiling", area_m2="4", region="ua")

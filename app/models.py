@@ -23,6 +23,10 @@ class Material(db.Model):
     unit = db.Column(db.String(16), nullable=False)
     unit_price = db.Column(db.Numeric(12, 2), nullable=False)
     currency = db.Column(db.String(3), nullable=False, default="PLN")
+    # Populated by scripts/sync_prices.py. Manually-seeded rows leave these
+    # null/default until a real price sync has run against them.
+    base_price = db.Column(db.Numeric(12, 4), nullable=True)
+    markup_multiplier = db.Column(db.Numeric(8, 4), nullable=False, default=Decimal("1"))
 
 
 class Work(db.Model):
@@ -36,6 +40,9 @@ class Work(db.Model):
     hours_per_unit = db.Column(db.Numeric(8, 4), nullable=False)
     sequence_order = db.Column(db.Integer, nullable=False)
     currency = db.Column(db.String(3), nullable=False, default="PLN")
+    # Populated by scripts/sync_prices.py, mirrors Material's fields above.
+    base_price = db.Column(db.Numeric(12, 4), nullable=True)
+    markup_multiplier = db.Column(db.Numeric(8, 4), nullable=False, default=Decimal("1"))
 
 
 class WorkNorm(db.Model):

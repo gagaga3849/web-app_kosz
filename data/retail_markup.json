@@ -1,0 +1,7 @@
+{
+  "default": 1.15,
+  "overrides": {
+    "plytki_podlogowe": 1.20,
+    "plytki_scienne": 1.20
+  }
+}

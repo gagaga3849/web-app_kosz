@@ -3,6 +3,7 @@ from decimal import Decimal, InvalidOperation
 from flask import Blueprint, current_app, jsonify, render_template, request
 
 from app.calculator import EstimateError, calculate_estimate, list_job_types, list_regions
+from app.area_hints import guess_area_from_text
 from app.i18n import DEFAULT_LOCALE, t
 from app.llm import parse_free_text, generate_estimate_summary
 
@@ -105,5 +106,17 @@ def parse_text():
     regions = [{"code": r.region_code, "name": r.name_pl} for r in list_regions()]
     
     result = parse_free_text(text, job_types, regions)
+
+    # The LLM found no size at all — fall back to a deterministic keyword
+    # guess (no LLM, no network) rather than leaving the user with a blank
+    # field and no starting point. Always flagged as an assumption, never
+    # treated as a confident match.
+    if not result.get("area_m2"):
+        hint = guess_area_from_text(text)
+        if hint:
+            result["area_m2"] = hint["area_m2"]
+            result["area_m2_assumed"] = True
+            result["area_hint_label"] = hint["label"]
+
     return jsonify(result)
 

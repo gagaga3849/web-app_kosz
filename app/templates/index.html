@@ -203,8 +203,9 @@
           const result = await response.json();
 
           const filledLabels = [];
+          const assumedLabels = [];
           const missingLabels = [];
-          let firstMissingField = null;
+          let firstAttentionField = null;
 
           function markFilled(field, value) {
             field.value = value;
@@ -213,10 +214,17 @@
             setTimeout(() => field.classList.remove("ring-2", "ring-green-500", "bg-green-50"), 3000);
           }
 
+          function markAssumed(field, value) {
+            field.value = value;
+            field.classList.add("ring-2", "ring-amber-500", "bg-amber-50");
+            setTimeout(() => field.classList.remove("ring-2", "ring-amber-500", "bg-amber-50"), 6000);
+            if (!firstAttentionField) firstAttentionField = field;
+          }
+
           function markMissing(field) {
             field.classList.add("ring-2", "ring-amber-500", "bg-amber-50");
             setTimeout(() => field.classList.remove("ring-2", "ring-amber-500", "bg-amber-50"), 5000);
-            if (!firstMissingField) firstMissingField = field;
+            if (!firstAttentionField) firstAttentionField = field;
           }
 
           // Job type
@@ -228,10 +236,16 @@
             missingLabels.push("rodzaj prac");
           }
 
-          // Area
+          // Area — three possible states: confidently found, assumed from a
+          // keyword default, or genuinely missing.
           if (result.area_m2 && fieldAreaM2) {
-            markFilled(fieldAreaM2, result.area_m2);
-            filledLabels.push("powierzchnia");
+            if (result.area_m2_assumed) {
+              markAssumed(fieldAreaM2, result.area_m2);
+              assumedLabels.push("powierzchnia (założono " + result.area_m2 + " m² — " + (result.area_hint_label || "typowa wartość") + ")");
+            } else {
+              markFilled(fieldAreaM2, result.area_m2);
+              filledLabels.push("powierzchnia");
+            }
           } else if (fieldAreaM2) {
             markMissing(fieldAreaM2);
             missingLabels.push("powierzchnię (m²)");
@@ -243,25 +257,27 @@
             filledLabels.push("region");
           }
 
-          if (missingLabels.length === 0) {
-            // Everything needed was recognized
+          if (missingLabels.length === 0 && assumedLabels.length === 0) {
+            // Everything needed was recognized with confidence
             parseFeedback.textContent = "{{ t('ai_success') }}";
             parseFeedback.className = "mt-2 text-xs text-green-700 font-medium bg-green-50 border border-green-200 px-3 py-2 rounded-lg";
-          } else if (filledLabels.length === 0) {
+          } else if (filledLabels.length === 0 && assumedLabels.length === 0) {
             // Nothing at all was recognized
             parseFeedback.textContent = "Nie udało się rozpoznać żadnych danych z opisu. Uzupełnij pola poniżej ręcznie.";
             parseFeedback.className = "mt-2 text-xs text-red-700 font-medium bg-red-50 border border-red-200 px-3 py-2 rounded-lg";
           } else {
-            // Partial match — say exactly what's missing and point at it
-            parseFeedback.textContent =
-              "Rozpoznano: " + filledLabels.join(", ") + ". Uzupełnij ręcznie: " + missingLabels.join(", ") + " (pole podświetlone poniżej).";
+            const parts = [];
+            if (filledLabels.length) parts.push("Rozpoznano: " + filledLabels.join(", ") + ".");
+            if (assumedLabels.length) parts.push("Przyjęto założenie: " + assumedLabels.join(", ") + " — zmień, jeśli inaczej.");
+            if (missingLabels.length) parts.push("Uzupełnij ręcznie: " + missingLabels.join(", ") + " (pole podświetlone poniżej).");
+            parseFeedback.textContent = parts.join(" ");
             parseFeedback.className = "mt-2 text-xs text-amber-800 font-medium bg-amber-50 border border-amber-200 px-3 py-2 rounded-lg";
           }
           parseFeedback.classList.remove("hidden");
 
-          if (firstMissingField) {
-            firstMissingField.focus();
-            firstMissingField.scrollIntoView({ behavior: "smooth", block: "center" });
+          if (firstAttentionField) {
+            firstAttentionField.focus();
+            firstAttentionField.scrollIntoView({ behavior: "smooth", block: "center" });
           }
         } catch (error) {
           console.error("Error parsing free text:", error);

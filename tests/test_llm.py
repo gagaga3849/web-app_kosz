@@ -37,6 +37,28 @@ def test_api_parse_text_success(client):
 def test_api_parse_text_partial_match(client):
     # job_type recognized but area_m2 wasn't mentioned in the text at all —
     # this must NOT be discarded; job_type should still come through.
+    # (Text deliberately has no recognizable space keyword, so the
+    # deterministic area-hint fallback shouldn't kick in either.)
+    with patch("app.routes.parse_free_text") as mock_parse:
+        mock_parse.return_value = {
+            "job_type": "wall_ceiling_painting",
+            "area_m2": None,
+            "region": None,
+        }
+
+        response = client.post(
+            "/api/parse_text",
+            json={"text": "prace malarskie"}
+        )
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["job_type"] == "wall_ceiling_painting"
+        assert data["area_m2"] is None
+
+def test_api_parse_text_falls_back_to_area_hint(client):
+    # LLM found the job type but no area — the route should fill area_m2
+    # from the deterministic keyword table and flag it as an assumption,
+    # never silently treat it as a confident value.
     with patch("app.routes.parse_free_text") as mock_parse:
         mock_parse.return_value = {
             "job_type": "wall_ceiling_painting",
@@ -50,8 +72,28 @@ def test_api_parse_text_partial_match(client):
         )
         assert response.status_code == 200
         data = response.get_json()
-        assert data["job_type"] == "wall_ceiling_painting"
+        assert data["area_m2"] == 15.0
+        assert data["area_m2_assumed"] is True
+        assert "garaż" in data["area_hint_label"]
+
+def test_api_parse_text_no_hint_available(client):
+    # LLM found nothing and the text has no recognizable space keyword —
+    # area_m2 stays None, no assumption fields are added.
+    with patch("app.routes.parse_free_text") as mock_parse:
+        mock_parse.return_value = {
+            "job_type": None,
+            "area_m2": None,
+            "region": None,
+        }
+
+        response = client.post(
+            "/api/parse_text",
+            json={"text": "coś tam coś tam"}
+        )
+        assert response.status_code == 200
+        data = response.get_json()
         assert data["area_m2"] is None
+        assert "area_m2_assumed" not in data
 
 def test_api_parse_text_invalid_payload(client):
     response = client.post(

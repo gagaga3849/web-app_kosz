@@ -5,10 +5,9 @@ from google.genai import types
 from pydantic import BaseModel, Field
 
 class ParseResult(BaseModel):
-    job_type: Optional[str] = Field(default=None, description="The job type code, matched strictly to one of the provided job type codes.")
-    area_m2: Optional[float] = Field(default=None, description="The area/size value in square meters.")
-    region: Optional[str] = Field(default=None, description="The region code, matched strictly to one of the provided region codes.")
-    confidence: bool = Field(description="True if both job_type and area_m2 were successfully parsed and matched, False otherwise.")
+    job_type: Optional[str] = Field(default=None, description="The job type code, matched strictly to one of the provided job type codes. Leave null ONLY if the type of work truly cannot be determined.")
+    area_m2: Optional[float] = Field(default=None, description="The area/size value in square meters. Leave null ONLY if no size or dimensions were mentioned at all.")
+    region: Optional[str] = Field(default=None, description="The region code, matched strictly to one of the provided region codes. Leave null if no region/city was mentioned.")
 
 def get_genai_client():
     api_key = os.environ.get("GEMINI_API_KEY")
@@ -22,7 +21,7 @@ def parse_free_text(text: str, job_types: list[dict[str, str]], regions: list[di
     """
     client = get_genai_client()
     if not client:
-        return {"job_type": None, "area_m2": None, "region": None, "confidence": False}
+        return {"job_type": None, "area_m2": None, "region": None}
 
     job_types_str = ", ".join([f"'{jt['code']}' ({jt['name']})" for jt in job_types])
     regions_str = ", ".join([f"'{r['code']}' ({r['name']})" for r in regions])
@@ -33,8 +32,10 @@ def parse_free_text(text: str, job_types: list[dict[str, str]], regions: list[di
         f"The valid job types are: {job_types_str}. "
         f"The valid region codes are: {regions_str}. "
         "If the user specifies dimensions (e.g. 2x2 or 2 by 3 meters), calculate the area (4m² or 6m² respectively). "
-        "Return the extracted values as structured JSON according to the schema. "
-        "If you cannot determine the job type or the area with high confidence, set confidence=false."
+        "Extract each field independently: if the job type is clear but no size is mentioned, still return the "
+        "job_type and simply leave area_m2 null (do not discard a field you ARE confident about just because "
+        "another field is missing). Only leave a field null when it truly cannot be determined from the text. "
+        "Return the extracted values as structured JSON according to the schema."
     )
 
     try:
@@ -53,7 +54,7 @@ def parse_free_text(text: str, job_types: list[dict[str, str]], regions: list[di
         return data
     except Exception as e:
         print(f"Gemini API error during parse: {e}")
-        return {"job_type": None, "area_m2": None, "region": None, "confidence": False}
+        return {"job_type": None, "area_m2": None, "region": None}
 
 def generate_estimate_summary(estimate_data: dict[str, Any], locale: str = "pl") -> Optional[str]:
     """

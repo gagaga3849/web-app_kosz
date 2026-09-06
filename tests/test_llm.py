@@ -20,9 +20,8 @@ def test_api_parse_text_success(client):
             "job_type": "bathroom_tiling",
             "area_m2": 4.0,
             "region": "pl",
-            "confidence": True
         }
-        
+
         response = client.post(
             "/api/parse_text",
             json={"text": "Ułóż kafelki w łazience, 4 m²"}
@@ -32,9 +31,27 @@ def test_api_parse_text_success(client):
         assert data["job_type"] == "bathroom_tiling"
         assert data["area_m2"] == 4.0
         assert data["region"] == "pl"
-        assert data["confidence"] is True
-        
+
         mock_parse.assert_called_once()
+
+def test_api_parse_text_partial_match(client):
+    # job_type recognized but area_m2 wasn't mentioned in the text at all —
+    # this must NOT be discarded; job_type should still come through.
+    with patch("app.routes.parse_free_text") as mock_parse:
+        mock_parse.return_value = {
+            "job_type": "wall_ceiling_painting",
+            "area_m2": None,
+            "region": None,
+        }
+
+        response = client.post(
+            "/api/parse_text",
+            json={"text": "malowanie garazu"}
+        )
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["job_type"] == "wall_ceiling_painting"
+        assert data["area_m2"] is None
 
 def test_api_parse_text_invalid_payload(client):
     response = client.post(

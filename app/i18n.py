@@ -8,6 +8,7 @@ STRINGS = {
         "job_type": "Rodzaj prac",
         "add_work": "Dodaj pracę",
         "remove_work": "Usuń pracę",
+        "search_work": "Szukaj rodzaju prac...",
         "area": "Powierzchnia podłogi (m²)",
         "region": "Region",
         "submit": "Oblicz kosztorys",

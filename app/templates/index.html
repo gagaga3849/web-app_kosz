@@ -47,7 +47,8 @@
             {% for selected_job, selected_area in form["items"] %}
               <div class="work-row grid gap-2 sm:grid-cols-[minmax(0,1fr)_8rem_auto] sm:items-end">
                 <label class="block text-sm font-medium text-stone-700">
-                  <span class="sr-only">{{ t("job_type") }}</span>
+                  <span>{{ t("job_type") }}</span>
+                  <input type="search" class="work-search mt-1 w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 focus:border-orange-800 focus:ring-1 focus:ring-orange-800 focus:outline-none" placeholder="{{ t('search_work') }}" autocomplete="off" />
                   <select name="job_type" class="field-job-type mt-1 w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-stone-900 focus:border-orange-800 focus:ring-1 focus:ring-orange-800 focus:outline-none transition-all duration-200">
                     {% for job in job_types %}
                       <option value="{{ job.code }}" {% if selected_job == job.code %}selected{% endif %}>{{ job.name_pl }}</option>
@@ -187,12 +188,40 @@
         return workRows.querySelector(selector);
       }
 
+      function normalizeSearch(value) {
+        return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+      }
+
+      function filterWorkOptions(row) {
+        const search = normalizeSearch(row.querySelector(".work-search").value);
+        const select = row.querySelector(".field-job-type");
+        let firstMatch = null;
+        let exactMatch = null;
+        Array.from(select.options).forEach((option) => {
+          const matches = !search || normalizeSearch(option.textContent).includes(search);
+          option.hidden = !matches;
+          if (matches && !firstMatch) firstMatch = option;
+          if (matches && normalizeSearch(option.textContent) === search) exactMatch = option;
+        });
+        const chosen = exactMatch || firstMatch;
+        if (search && chosen) select.value = chosen.value;
+      }
+
+      function setupWorkRow(row) {
+        row.querySelector(".work-search").addEventListener("input", () => filterWorkOptions(row));
+      }
+
+      workRows.querySelectorAll(".work-row").forEach(setupWorkRow);
+
       addWorkButton.addEventListener("click", () => {
         const firstRow = workRows.querySelector(".work-row");
         const newRow = firstRow.cloneNode(true);
+        newRow.querySelector(".work-search").value = "";
+        newRow.querySelectorAll(".field-job-type option").forEach((option) => option.hidden = false);
         newRow.querySelector(".field-area-m2").value = "4";
         newRow.querySelector(".remove-work-button").classList.remove("hidden");
         workRows.appendChild(newRow);
+        setupWorkRow(newRow);
         updateRemoveButtons();
         newRow.querySelector(".field-job-type").focus();
       });

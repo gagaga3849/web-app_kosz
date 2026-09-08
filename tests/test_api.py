@@ -81,3 +81,16 @@ def test_form_round_trip(tmp_path):
     html = response.get_data(as_text=True)
     assert "5392.40" in html
     assert "PLN" in html
+
+
+def test_form_exposes_extended_work_catalog_and_search(tmp_path):
+    class Cfg(FileConfig):
+        SQLALCHEMY_DATABASE_URI = f"sqlite:///{tmp_path / 'test.db'}"
+
+    client = create_app(Cfg).test_client()
+    html = client.get("/").get_data(as_text=True)
+
+    assert "Szukaj rodzaju prac" in html
+    assert "Wyburzanie ścian działowych" in html
+    assert "Instalacja kanalizacyjna" in html
+    assert "Nowa instalacja elektryczna" in html

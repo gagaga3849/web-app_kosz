@@ -182,6 +182,89 @@ def calculate_estimate(
     }
 
 
+def calculate_combined_estimate(
+    *,
+    items: list[dict[str, str]],
+    region: str,
+    hours_per_day: int = 8,
+) -> dict[str, Any]:
+    """Combine estimates for several job types into one result."""
+    if not items:
+        raise EstimateError("Dodaj co najmniej jeden rodzaj prac.")
+
+    estimates = [
+        calculate_estimate(
+            job_type=item["job_type"],
+            area_m2=item["area_m2"],
+            region=region,
+            hours_per_day=hours_per_day,
+        )
+        for item in items
+    ]
+
+    def combine_lines(key: str) -> list[dict[str, Any]]:
+        combined: dict[str, dict[str, Any]] = {}
+        for estimate in estimates:
+            for line in estimate[key]:
+                bucket = combined.setdefault(
+                    line["code"],
+                    {
+                        "code": line["code"],
+                        "name": line["name"],
+                        "unit": line["unit"],
+                        "quantity": Decimal("0"),
+                        "unit_price": line["unit_price"],
+                        "total": Decimal("0"),
+                        "currency": line["currency"],
+                    },
+                )
+                bucket["quantity"] += Decimal(line["quantity"])
+                bucket["total"] += Decimal(line["total"])
+
+        rows = []
+        for row in combined.values():
+            row["quantity"] = _num(row["quantity"])
+            row["total"] = _money(row["total"])
+            rows.append(row)
+        return sorted(rows, key=lambda row: row["code"])
+
+    sequence_by_code = {
+        step["code"]: step
+        for estimate in estimates
+        for step in estimate["sequence"]
+    }
+    dimensions = {
+        dimension: _num(
+            sum((Decimal(estimate["dimensions"][dimension]) for estimate in estimates), Decimal("0"))
+        )
+        for dimension in ("floor_m2", "wall_m2", "perimeter_m")
+    }
+    materials = combine_lines("materials")
+    works = combine_lines("works")
+    materials_total = sum((Decimal(row["total"]) for row in materials), Decimal("0"))
+    works_total = sum((Decimal(row["total"]) for row in works), Decimal("0"))
+    total_price = (materials_total + works_total).quantize(MONEY, rounding=ROUND_HALF_UP)
+
+    return {
+        "job_type": "combined",
+        "job_name": " + ".join(estimate["job_name"] for estimate in estimates),
+        "area_m2": _num(sum((Decimal(estimate["area_m2"]) for estimate in estimates), Decimal("0"))),
+        "region": region,
+        "currency": "PLN",
+        "dimensions": dimensions,
+        "materials": materials,
+        "works": works,
+        "materials_total": _money(materials_total),
+        "works_total": _money(works_total),
+        "total_price": _money(total_price),
+        "estimated_labor_hours": _num(
+            sum((Decimal(estimate["estimated_labor_hours"]) for estimate in estimates), Decimal("0"))
+        ),
+        "estimated_duration_days": sum(estimate["estimated_duration_days"] for estimate in estimates),
+        "sequence": sorted(sequence_by_code.values(), key=lambda step: step["order"]),
+    }
+
+
 def list_job_types() -> list[JobType]:
     return JobType.query.order_by(JobType.code).all()
 

@@ -36,6 +36,38 @@ def test_api_estimate_invalid_area(tmp_path):
     assert "stack" not in response.get_json()["error"].lower()
 
 
+def test_api_estimate_combines_multiple_work_types(tmp_path):
+    class Cfg(FileConfig):
+        SQLALCHEMY_DATABASE_URI = f"sqlite:///{tmp_path / 'test.db'}"
+
+    client = create_app(Cfg).test_client()
+    response = client.post(
+        "/api/estimate",
+        json={
+            "items": [
+                {"job_type": "bathroom_tiling", "area_m2": 4},
+                {"job_type": "painting", "area_m2": 4},
+            ],
+            "region": "pl",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["job_type"] == "combined"
+    assert payload["area_m2"] == "8"
+    assert payload["total_price"] == "5902.20"
+    assert {item["code"] for item in payload["works"]} == {
+        "prep",
+        "hydro",
+        "tile_floor",
+        "tile_wall",
+        "grout",
+        "paint_prep",
+        "paint_finish",
+    }
+
+
 def test_form_round_trip(tmp_path):
     class Cfg(FileConfig):
         SQLALCHEMY_DATABASE_URI = f"sqlite:///{tmp_path / 'test.db'}"

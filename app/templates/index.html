@@ -36,28 +36,34 @@
       </div>
 
       <form id="estimate_form_el" class="mt-6 space-y-4" method="post" action="{{ url_for('main.estimate_form') }}">
-        <label class="block text-sm font-medium text-stone-700">
-          {{ t("job_type") }}
-          <select id="field_job_type" name="job_type" class="mt-1 w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-stone-900 focus:border-orange-800 focus:ring-1 focus:ring-orange-800 focus:outline-none transition-all duration-200">
-            {% for job in job_types %}
-              <option value="{{ job.code }}" {% if form.job_type == job.code %}selected{% endif %}>{{ job.name_pl }}</option>
+        <div>
+          <div class="mb-2 flex items-center justify-between">
+            <span class="text-sm font-medium text-stone-700">{{ t("job_type") }}</span>
+            <button type="button" id="add_work_button" class="inline-flex items-center gap-1 rounded-lg border border-orange-800 px-3 py-1.5 text-sm font-semibold text-orange-800 hover:bg-orange-50" aria-label="{{ t('add_work') }}">
+              <span class="text-lg leading-none" aria-hidden="true">+</span>{{ t("add_work") }}
+            </button>
+          </div>
+          <div id="work_rows" class="space-y-3">
+            {% for selected_job, selected_area in form["items"] %}
+              <div class="work-row grid gap-2 sm:grid-cols-[minmax(0,1fr)_8rem_auto] sm:items-end">
+                <label class="block text-sm font-medium text-stone-700">
+                  <span class="sr-only">{{ t("job_type") }}</span>
+                  <select name="job_type" class="field-job-type mt-1 w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-stone-900 focus:border-orange-800 focus:ring-1 focus:ring-orange-800 focus:outline-none transition-all duration-200">
+                    {% for job in job_types %}
+                      <option value="{{ job.code }}" {% if selected_job == job.code %}selected{% endif %}>{{ job.name_pl }}</option>
+                    {% endfor %}
+                  </select>
+                </label>
+                <label class="block text-sm font-medium text-stone-700">
+                  <span class="sr-only">{{ t("area") }}</span>
+                  <input type="number" name="area_m2" min="0.1" step="0.1" required value="{{ selected_area }}" class="field-area-m2 mt-1 w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-stone-900 focus:border-orange-800 focus:ring-1 focus:ring-orange-800 focus:outline-none transition-all duration-200" />
+                </label>
+                <button type="button" class="remove-work-button hidden h-10 rounded-lg border border-stone-300 px-3 text-stone-600 hover:bg-stone-100" aria-label="{{ t('remove_work') }}">×</button>
+              </div>
             {% endfor %}
-          </select>
-        </label>
-
-        <label class="block text-sm font-medium text-stone-700">
-          {{ t("area") }}
-          <input
-            id="field_area_m2"
-            type="number"
-            name="area_m2"
-            min="0.1"
-            step="0.1"
-            required
-            value="{{ form.area_m2 }}"
-            class="mt-1 w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-stone-900 focus:border-orange-800 focus:ring-1 focus:ring-orange-800 focus:outline-none transition-all duration-200"
-          />
-        </label>
+          </div>
+          <p class="mt-2 text-xs text-stone-500">{{ t("area") }}: każdą pozycję możesz policzyć dla osobnej powierzchni.</p>
+        </div>
 
         <label class="block text-sm font-medium text-stone-700">
           {{ t("region") }}
@@ -166,11 +172,38 @@
       const parseSpinner = document.getElementById("parse_spinner");
       const parseFeedback = document.getElementById("parse_feedback");
 
-      const fieldJobType = document.getElementById("field_job_type");
-      const fieldAreaM2 = document.getElementById("field_area_m2");
       const fieldRegion = document.getElementById("field_region");
+      const workRows = document.getElementById("work_rows");
+      const addWorkButton = document.getElementById("add_work_button");
 
       if (!btnParseText) return;
+
+      function updateRemoveButtons() {
+        const buttons = workRows.querySelectorAll(".remove-work-button");
+        buttons.forEach((button) => button.classList.toggle("hidden", buttons.length === 1));
+      }
+
+      function firstWorkField(selector) {
+        return workRows.querySelector(selector);
+      }
+
+      addWorkButton.addEventListener("click", () => {
+        const firstRow = workRows.querySelector(".work-row");
+        const newRow = firstRow.cloneNode(true);
+        newRow.querySelector(".field-area-m2").value = "4";
+        newRow.querySelector(".remove-work-button").classList.remove("hidden");
+        workRows.appendChild(newRow);
+        updateRemoveButtons();
+        newRow.querySelector(".field-job-type").focus();
+      });
+
+      workRows.addEventListener("click", (event) => {
+        if (event.target.closest(".remove-work-button")) {
+          event.target.closest(".work-row").remove();
+          updateRemoveButtons();
+        }
+      });
+      updateRemoveButtons();
 
       btnParseText.addEventListener("click", async () => {
         const text = freeTextInput.value.trim();
@@ -226,6 +259,9 @@
             setTimeout(() => field.classList.remove("ring-2", "ring-amber-500", "bg-amber-50"), 5000);
             if (!firstAttentionField) firstAttentionField = field;
           }
+
+          const fieldJobType = firstWorkField(".field-job-type");
+          const fieldAreaM2 = firstWorkField(".field-area-m2");
 
           // Job type
           if (result.job_type && fieldJobType) {

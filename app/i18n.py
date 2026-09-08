@@ -6,6 +6,8 @@ STRINGS = {
         "headline": "Wycena ułożenia płytek",
         "intro": "Podaj powierzchnię podłogi. Ściany liczymy automatycznie (×3) według norm katalogowych — bez wyszukiwania cen w internecie.",
         "job_type": "Rodzaj prac",
+        "add_work": "Dodaj pracę",
+        "remove_work": "Usuń pracę",
         "area": "Powierzchnia podłogi (m²)",
         "region": "Region",
         "submit": "Oblicz kosztorys",

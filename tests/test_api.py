@@ -1,3 +1,5 @@
+from io import BytesIO
+
 from app.config import Config
 from app import create_app
 
@@ -94,3 +96,41 @@ def test_form_exposes_extended_work_catalog_and_search(tmp_path):
     assert "Wyburzanie ścian działowych" in html
     assert "Instalacja kanalizacyjna" in html
     assert "Nowa instalacja elektryczna" in html
+
+
+def test_estimate_exports_are_downloadable(tmp_path):
+    class Cfg(FileConfig):
+        SQLALCHEMY_DATABASE_URI = f"sqlite:///{tmp_path / 'test.db'}"
+
+    client = create_app(Cfg).test_client()
+    data = {"job_type": "bathroom_tiling", "area_m2": "4", "region": "pl"}
+
+    for file_format, content_type, signature in (
+        ("pdf", "application/pdf", b"%PDF"),
+        ("xls", "application/vnd.ms-excel", b"\xd0\xcf\x11\xe0"),
+        ("docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", b"PK"),
+    ):
+        response = client.post(f"/estimate/export/{file_format}", data=data)
+        assert response.status_code == 200
+        assert response.content_type == content_type
+        assert response.data.startswith(signature)
+        assert "attachment" in response.headers["Content-Disposition"]
+
+
+def test_pdf_export_preserves_polish_characters(tmp_path):
+    class Cfg(FileConfig):
+        SQLALCHEMY_DATABASE_URI = f"sqlite:///{tmp_path / 'test.db'}"
+
+    client = create_app(Cfg).test_client()
+    response = client.post(
+        "/estimate/export/pdf",
+        data={"job_type": "bathroom_tiling", "area_m2": "4", "region": "pl"},
+    )
+
+    from pypdf import PdfReader
+
+    text = "\n".join(page.extract_text() or "" for page in PdfReader(BytesIO(response.data)).pages)
+    assert response.status_code == 200
+    assert "Materiały" in text
+    assert "Kolejność prac" in text
+    assert "ściany" in text

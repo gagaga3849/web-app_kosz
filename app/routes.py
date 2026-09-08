@@ -1,6 +1,6 @@
 from decimal import Decimal, InvalidOperation
 
-from flask import Blueprint, current_app, jsonify, render_template, request
+from flask import Blueprint, current_app, jsonify, render_template, request, send_file
 
 from app.calculator import (
     EstimateError,
@@ -11,6 +11,7 @@ from app.calculator import (
 from app.area_hints import guess_area_from_text
 from app.i18n import DEFAULT_LOCALE, t
 from app.llm import parse_free_text, generate_estimate_summary
+from app.exports import make_docx, make_pdf, make_xls
 
 bp = Blueprint("main", __name__)
 
@@ -54,6 +55,21 @@ def _parse_items(data: dict) -> tuple[list[dict[str, str]], str]:
     return items, region
 
 
+def _estimate_from_form():
+    items, region = _parse_items({
+        "items": [
+            {"job_type": job_type, "area_m2": area}
+            for job_type, area in zip(request.form.getlist("job_type"), request.form.getlist("area_m2"))
+        ],
+        "region": request.form.get("region"),
+    })
+    return calculate_combined_estimate(
+        items=items,
+        region=region,
+        hours_per_day=current_app.config["LABOR_HOURS_PER_DAY"],
+    )
+
+
 def _form_context(**extra):
     locale = _locale()
     ctx = {
@@ -83,18 +99,7 @@ def index():
 def estimate_form():
     locale = _locale()
     try:
-        items, region = _parse_items({
-            "items": [
-                {"job_type": job_type, "area_m2": area}
-                for job_type, area in zip(request.form.getlist("job_type"), request.form.getlist("area_m2"))
-            ],
-            "region": request.form.get("region"),
-        })
-        estimate = calculate_combined_estimate(
-            items=items,
-            region=region,
-            hours_per_day=current_app.config["LABOR_HOURS_PER_DAY"],
-        )
+        estimate = _estimate_from_form()
         # Generate friendly LLM summary if key is available
         summary = generate_estimate_summary(estimate, locale=locale)
         estimate["summary"] = summary
@@ -119,6 +124,24 @@ def estimate_api():
         summary = generate_estimate_summary(estimate, locale="pl")
         estimate["summary"] = summary
         return jsonify(estimate)
+    except EstimateError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.post("/estimate/export/<file_format>")
+def export_estimate(file_format: str):
+    generators = {
+        "pdf": (make_pdf, "application/pdf", "kosztorys.pdf"),
+        "xls": (make_xls, "application/vnd.ms-excel", "kosztorys.xls"),
+        "docx": (make_docx, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "kosztorys.docx"),
+    }
+    generator_info = generators.get(file_format)
+    if generator_info is None:
+        return jsonify({"error": "Nieobsługiwany format pliku."}), 404
+    try:
+        estimate = _estimate_from_form()
+        generator, mimetype, filename = generator_info
+        return send_file(generator(estimate), as_attachment=True, download_name=filename, mimetype=mimetype)
     except EstimateError as exc:
         return jsonify({"error": str(exc)}), 400
 

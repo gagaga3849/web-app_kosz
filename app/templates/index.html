@@ -160,6 +160,12 @@
               <dd>{{ estimate.estimated_duration_days }} {{ t("days") }}</dd>
             </div>
           </dl>
+
+          <div class="mt-8 flex flex-wrap justify-end gap-2 border-t border-stone-200 pt-4">
+            <button type="button" data-export-format="pdf" class="rounded-lg border border-stone-300 px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-100">{{ t("save_pdf") }}</button>
+            <button type="button" data-export-format="xls" class="rounded-lg border border-stone-300 px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-100">{{ t("save_xls") }}</button>
+            <button type="button" data-export-format="docx" class="rounded-lg border border-stone-300 px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-100">{{ t("save_docx") }}</button>
+          </div>
         </div>
       {% endif %}
     </section>
@@ -176,6 +182,7 @@
       const fieldRegion = document.getElementById("field_region");
       const workRows = document.getElementById("work_rows");
       const addWorkButton = document.getElementById("add_work_button");
+      const estimateForm = document.getElementById("estimate_form_el");
 
       if (!btnParseText) return;
 
@@ -233,6 +240,24 @@
         }
       });
       updateRemoveButtons();
+
+      document.querySelectorAll("[data-export-format]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const exportForm = document.createElement("form");
+          exportForm.method = "POST";
+          exportForm.action = "/estimate/export/" + button.dataset.exportFormat;
+          exportForm.hidden = true;
+          estimateForm.querySelectorAll("select[name='job_type'], input[name='area_m2'], select[name='region']").forEach((field) => {
+            const input = document.createElement("input");
+            input.type = "hidden";
+            input.name = field.name;
+            input.value = field.value;
+            exportForm.appendChild(input);
+          });
+          document.body.appendChild(exportForm);
+          exportForm.submit();
+        });
+      });
 
       btnParseText.addEventListener("click", async () => {
         const text = freeTextInput.value.trim();

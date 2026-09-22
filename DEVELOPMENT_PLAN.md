@@ -91,10 +91,10 @@ Companion file to `project.md` (master prompt). Drop this in the repo root or `.
 
 **Goal:** second interface, zero duplicated logic.
 
-- [ ] aiogram bot that accepts text (and later voice) messages
-- [ ] Bot calls the same `/api/estimate` — no separate calculation logic in the bot codebase
+- [x] aiogram bot that accepts text messages (voice remains deferred)
+- [x] Bot calls `/api/parse_text` then the same `/api/estimate` — no separate calculation logic in the bot codebase
 - [ ] Voice messages: Whisper API transcription → same text pipeline as Phase 3
-- [ ] Bot replies with a formatted estimate (text or a simple PDF/image if easy; don't over-invest here yet)
+- [x] Bot replies with a formatted estimate (text or a simple PDF/image if easy; don't over-invest here yet)
 
 **Definition of done:** the bot and the website produce identical estimates for the same input, because they hit the same endpoint.
 

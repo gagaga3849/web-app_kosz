@@ -8,9 +8,34 @@
   </head>
   <body class="min-h-screen bg-stone-100 text-stone-900 antialiased">
     <header class="border-b border-stone-200 bg-[#faf6f1]">
-      <div class="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
+      <div class="mx-auto flex max-w-5xl flex-col gap-4 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
         <p class="text-sm font-semibold tracking-wide text-orange-800">{{ t("site_title") }}</p>
-        <p class="text-xs uppercase tracking-widest text-stone-500">PLN · {{ t("lang_name") }}</p>
+        <form class="grid w-full grid-cols-3 gap-2 sm:w-auto" method="get" action="{{ url_for('main.preferences') }}">
+          <label class="min-w-0">
+            <span class="sr-only">{{ t("language") }}</span>
+            <select name="lang" aria-label="{{ t('language') }}" onchange="this.form.submit()" class="w-full rounded-lg border border-stone-300 bg-white px-2.5 py-2 text-xs font-semibold text-stone-700 shadow-sm outline-none transition focus:border-orange-800 focus:ring-2 focus:ring-orange-800/20">
+              {% for code, label in [("pl", "PL · Polski"), ("en", "EN · English"), ("ru", "RU · Русский")] %}
+                <option value="{{ code }}" {% if locale == code %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label class="min-w-0">
+            <span class="sr-only">{{ t("currency") }}</span>
+            <select name="currency" aria-label="{{ t('currency') }}" onchange="this.form.submit()" class="w-full rounded-lg border border-stone-300 bg-white px-2.5 py-2 text-xs font-semibold text-stone-700 shadow-sm outline-none transition focus:border-orange-800 focus:ring-2 focus:ring-orange-800/20">
+              {% for code, label in currency_options %}
+                <option value="{{ code }}" {% if selected_currency == code %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label class="min-w-0">
+            <span class="sr-only">{{ t("market") }}</span>
+            <select name="market" aria-label="{{ t('market') }}" onchange="this.form.submit()" class="w-full rounded-lg border border-stone-300 bg-white px-2.5 py-2 text-xs font-semibold text-stone-700 shadow-sm outline-none transition focus:border-orange-800 focus:ring-2 focus:ring-orange-800/20">
+              {% for code, label in market_options %}
+                <option value="{{ code }}" {% if selected_market == code %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </label>
+        </form>
       </div>
     </header>
     <main class="mx-auto max-w-5xl px-6 py-10">

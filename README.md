@@ -39,3 +39,13 @@ npm run watch:css
 ```bash
 pytest
 ```
+
+## Telegram bot (optional)
+
+Start the Flask app first, set `TELEGRAM_BOT_TOKEN` in `.env`, then run:
+
+```bash
+python3 -m bot.telegram_bot
+```
+
+The bot forwards messages through `/api/parse_text` and `/api/estimate`; it contains no pricing or calculation logic of its own.

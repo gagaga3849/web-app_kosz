@@ -7,6 +7,7 @@ from math import ceil
 from typing import Any
 
 from app.models import JobType, RegionalCoefficient, WorkNorm
+from app.i18n import catalog_name
 
 
 MONEY = Decimal("0.01")
@@ -64,6 +65,7 @@ def calculate_estimate(
     area_m2: Decimal | float | str,
     region: str,
     hours_per_day: int = 8,
+    locale: str = "pl",
 ) -> dict[str, Any]:
     """Deterministic estimate from catalog tables. No LLM, no network."""
     try:
@@ -100,7 +102,7 @@ def calculate_estimate(
                 mat.code,
                 {
                     "code": mat.code,
-                    "name": mat.name_pl,
+                    "name": catalog_name(mat.code, mat.name_pl, locale),
                     "unit": mat.unit,
                     "quantity": Decimal("0"),
                     "unit_price": Decimal(mat.unit_price) * coefficient,
@@ -144,7 +146,7 @@ def calculate_estimate(
         works.append(
             LineItem(
                 code=work.code,
-                name=work.name_pl,
+                name=catalog_name(work.code, work.name_pl, locale),
                 unit=work.unit,
                 quantity=row["quantity"],
                 unit_price=unit_price,
@@ -152,7 +154,7 @@ def calculate_estimate(
                 currency=work.currency,
             )
         )
-        sequence.append({"order": work.sequence_order, "code": work.code, "name": work.name_pl})
+        sequence.append({"order": work.sequence_order, "code": work.code, "name": catalog_name(work.code, work.name_pl, locale)})
         total_hours += row["hours"]
 
     materials_total = sum((item.total for item in materials), Decimal("0"))
@@ -162,7 +164,7 @@ def calculate_estimate(
 
     return {
         "job_type": job.code,
-        "job_name": job.name_pl,
+        "job_name": catalog_name(job.code, job.name_pl, locale),
         "area_m2": _num(area),
         "region": region,
         "currency": "PLN",
@@ -187,6 +189,7 @@ def calculate_combined_estimate(
     items: list[dict[str, str]],
     region: str,
     hours_per_day: int = 8,
+    locale: str = "pl",
 ) -> dict[str, Any]:
     """Combine estimates for several job types into one result."""
     if not items:
@@ -198,6 +201,7 @@ def calculate_combined_estimate(
             area_m2=item["area_m2"],
             region=region,
             hours_per_day=hours_per_day,
+            locale=locale,
         )
         for item in items
     ]

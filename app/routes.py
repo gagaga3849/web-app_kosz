@@ -1,6 +1,6 @@
 from decimal import Decimal, InvalidOperation
 
-from flask import Blueprint, current_app, jsonify, render_template, request, send_file
+from flask import Blueprint, current_app, jsonify, redirect, render_template, request, send_file, session, url_for
 
 from app.calculator import (
     EstimateError,
@@ -9,15 +9,22 @@ from app.calculator import (
     list_regions,
 )
 from app.area_hints import guess_area_from_text
-from app.i18n import DEFAULT_LOCALE, t
+from app.i18n import DEFAULT_LOCALE, SUPPORTED_LOCALES, catalog_name, t
 from app.llm import parse_free_text, generate_estimate_summary
 from app.exports import make_docx, make_pdf, make_xls
 
 bp = Blueprint("main", __name__)
 
+MARKET_OPTIONS = [("pl", "PL · Polska")]
+CURRENCY_OPTIONS = [("PLN", "PLN · złoty")]
+
 
 def _locale() -> str:
-    return current_app.config.get("DEFAULT_LOCALE", DEFAULT_LOCALE)
+    requested = request.args.get("lang")
+    if requested in SUPPORTED_LOCALES:
+        session["locale"] = requested
+    selected = session.get("locale", current_app.config.get("DEFAULT_LOCALE", DEFAULT_LOCALE))
+    return selected if selected in SUPPORTED_LOCALES else DEFAULT_LOCALE
 
 
 def _parse_payload(data: dict) -> tuple[str, Decimal, str]:
@@ -67,16 +74,24 @@ def _estimate_from_form():
         items=items,
         region=region,
         hours_per_day=current_app.config["LABOR_HOURS_PER_DAY"],
+        locale=_locale(),
     )
 
 
 def _form_context(**extra):
     locale = _locale()
+    job_types = list_job_types()
+    regions = list_regions()
     ctx = {
         "t": lambda key: t(key, locale),
         "locale": locale,
-        "job_types": list_job_types(),
-        "regions": list_regions(),
+        "job_types": job_types,
+        "regions": regions,
+        "catalog_name": lambda code, fallback: catalog_name(code, fallback, locale),
+        "market_options": MARKET_OPTIONS,
+        "currency_options": CURRENCY_OPTIONS,
+        "selected_market": session.get("market", current_app.config.get("DEFAULT_REGION", "pl")),
+        "selected_currency": session.get("currency", current_app.config.get("DEFAULT_CURRENCY", "PLN")),
         "form": {
             "job_type": request.form.get("job_type", "bathroom_tiling"),
             "area_m2": request.form.get("area_m2", "4"),
@@ -95,11 +110,30 @@ def index():
     return render_template("index.html", **_form_context())
 
 
+@bp.get("/language/<locale>")
+def set_language(locale: str):
+    if locale in SUPPORTED_LOCALES:
+        session["locale"] = locale
+    return redirect(url_for("main.index"))
+
+
+@bp.get("/preferences")
+def preferences():
+    if request.args.get("lang") in SUPPORTED_LOCALES:
+        session["locale"] = request.args["lang"]
+    if request.args.get("market") in {code for code, _ in MARKET_OPTIONS}:
+        session["market"] = request.args["market"]
+    if request.args.get("currency") in {code for code, _ in CURRENCY_OPTIONS}:
+        session["currency"] = request.args["currency"]
+    return redirect(url_for("main.index"))
+
+
 @bp.post("/estimate")
 def estimate_form():
     locale = _locale()
     try:
         estimate = _estimate_from_form()
+        locale = _locale()
         # Generate friendly LLM summary if key is available
         summary = generate_estimate_summary(estimate, locale=locale)
         estimate["summary"] = summary
@@ -119,6 +153,7 @@ def estimate_api():
             items=items,
             region=region,
             hours_per_day=current_app.config["LABOR_HOURS_PER_DAY"],
+            locale=_locale(),
         )
         # Generate friendly LLM summary if key is available
         summary = generate_estimate_summary(estimate, locale="pl")
@@ -172,4 +207,18 @@ def parse_text():
             result["area_hint_label"] = hint["label"]
 
     return jsonify(result)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 

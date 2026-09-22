@@ -1,4 +1,5 @@
 from decimal import Decimal, InvalidOperation
+from typing import Optional, Tuple
 
 from flask import Blueprint, current_app, jsonify, redirect, render_template, request, send_file, session, url_for
 
@@ -86,7 +87,7 @@ def _estimate_from_form():
     )
 
 
-def _grouped_regions(regions: list, locale: str) -> tuple[tuple[str, str] | None, list[dict]]:
+def _grouped_regions(regions: list, locale: str) -> Tuple[Optional[Tuple[str, str]], list[dict]]:
     """Build (national_fallback_option, [{label, options: [(code, label)]}...]).
 
     Only includes voivodeships whose two rows (capital + average) actually

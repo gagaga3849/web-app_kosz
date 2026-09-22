@@ -1,0 +1,833 @@
+From 3fc5adb9b39bdd55865dd56de4c5e32b5ed4c516 Mon Sep 17 00:00:00 2001
+From: Claude <dev@example.com>
+Date: Tue, 22 Sep 2026 10:47:10 +0000
+Subject: [PATCH] Fix EN/RU export & API locale bugs; add voivodeship-level
+ regional pricing
+
+- exports.py: PDF/Excel/Word were hardcoded to Polish labels regardless of
+  the selected site language. Now locale-aware via app.i18n.t(), same as
+  the web page already was.
+- routes.py: /api/estimate hardcoded locale="pl" for the AI summary,
+  ignoring the caller's actual ?lang/session locale. Now uses the real
+  locale, matching the web form's behavior.
+- llm.py: free-text parsing prompt only mentioned Polish/Ukrainian even
+  though the UI supports EN/RU too; broadened it.
+- New app/regions_data.py: single source of truth for 16 voivodeships,
+  each split into capital city vs. voivodeship average (32 regions +
+  1 national fallback = 33 total), with PL/EN/RU display names. Deliberately
+  NOT split down to powiat (district) level -- that's ~380 districts with
+  no reliable free data source behind it, and real PL kosztorys tools
+  (Sekocenbud included) don't go that granular either; voivodeship +
+  capital city is the actual professional-grade split.
+- models.py: RegionalCoefficient gains voivodeship_code + is_capital for
+  grouping the new picker.
+- seed.py: seeds all 33 regions; ensure_regions() upgrades an
+  already-seeded dev DB the same way ensure_extended_catalog() already
+  does for the work catalog -- idempotent, never overwrites a coefficient
+  that already exists (so a manually-tuned prod value survives an upgrade).
+- templates/index.html: region <select> now renders <optgroup> per
+  voivodeship with two options each (capital / average), plus the
+  national-average fallback as a plain top-level option.
+- Coefficients are a calibrated STARTING approximation grounded in
+  publicly reported PL regional labor-cost spreads (Warsaw highest,
+  eastern voivodeships lowest) -- same placeholder status as the rest of
+  this project's pricing per data/README.md. Replace with real Sekocenbud
+  regional data before quoting real clients on it.
+- Tests: tests/test_regions.py (seeding, ordering, price scaling by
+  region, dropdown rendering, upgrade idempotency) + regression tests in
+  test_api.py/test_llm.py for both locale bugs.
+---
+ app/exports.py           |  90 ++++++++++++++-------------
+ app/i18n.py              |   3 +
+ app/llm.py               |   4 +-
+ app/models.py            |   6 +-
+ app/regions_data.py      | 128 +++++++++++++++++++++++++++++++++++++++
+ app/routes.py            |  52 ++++++++++++++--
+ app/seed.py              |  67 +++++++++++++++++---
+ app/templates/index.html |  12 +++-
+ tests/test_api.py        |  44 +++++++++++++-
+ tests/test_llm.py        |  17 ++++++
+ tests/test_regions.py    |  92 ++++++++++++++++++++++++++++
+ 11 files changed, 455 insertions(+), 60 deletions(-)
+ create mode 100644 app/regions_data.py
+ create mode 100644 tests/test_regions.py
+
+diff --git a/app/exports.py b/app/exports.py
+index 52bb387..8374fda 100644
+--- a/app/exports.py
++++ b/app/exports.py
+@@ -3,16 +3,19 @@ from __future__ import annotations
+ from io import BytesIO
+ from pathlib import Path
+ 
++from app.i18n import DEFAULT_LOCALE, t
+ 
+-def _rows(estimate: dict) -> list[list[str]]:
+-    rows = [["Materiały"], ["Pozycja", "Ilość", "J.m.", "Cena jedn.", "Wartość"]]
++
++def _rows(estimate: dict, locale: str) -> list[list[str]]:
++    materials_header = [t("item", locale), t("qty", locale), t("unit", locale), t("unit_price", locale), t("line_total", locale)]
++    rows = [[t("materials", locale)], materials_header]
+     for item in estimate["materials"]:
+         rows.append([
+             item["name"], item["quantity"], item["unit"],
+             f'{item["unit_price"]} {item["currency"]}',
+             f'{item["total"]} {item["currency"]}',
+         ])
+-    rows.extend([["Robocizna"], ["Pozycja", "Ilość", "J.m.", "Cena jedn.", "Wartość"]])
++    rows.extend([[t("works", locale)], materials_header])
+     for item in estimate["works"]:
+         rows.append([
+             item["name"], item["quantity"], item["unit"],
+@@ -20,23 +23,23 @@ def _rows(estimate: dict) -> list[list[str]]:
+             f'{item["total"]} {item["currency"]}',
+         ])
+     rows.extend([
+-        [], ["Materiały razem", f'{estimate["materials_total"]} {estimate["currency"]}'],
+-        ["Robocizna razem", f'{estimate["works_total"]} {estimate["currency"]}'],
+-        ["Razem", f'{estimate["total_price"]} {estimate["currency"]}'],
+-        ["Szacowany czas", f'{estimate["estimated_duration_days"]} dni roboczych'],
++        [], [t("materials_total", locale), f'{estimate["materials_total"]} {estimate["currency"]}'],
++        [t("works_total", locale), f'{estimate["works_total"]} {estimate["currency"]}'],
++        [t("total", locale), f'{estimate["total_price"]} {estimate["currency"]}'],
++        [t("duration", locale), f'{estimate["estimated_duration_days"]} {t("days", locale)}'],
+     ])
+     return rows
+ 
+ 
+-def _heading_lines(estimate: dict) -> list[str]:
++def _heading_lines(estimate: dict, locale: str) -> list[str]:
+     return [
+         estimate["job_name"],
+-        f'Powierzchnia: {estimate["area_m2"]} m² | Region: {estimate["region"]}',
++        f'{t("area", locale)}: {estimate["area_m2"]} m² | {t("region", locale)}: {estimate["region"]}',
+         (
+-            "Wymiary: "
+-            f'podłoga {estimate["dimensions"]["floor_m2"]} m², '
+-            f'ściany {estimate["dimensions"]["wall_m2"]} m², '
+-            f'obwód {estimate["dimensions"]["perimeter_m"]} m'
++            f'{t("dimensions", locale)}: '
++            f'{t("floor", locale)} {estimate["dimensions"]["floor_m2"]} m², '
++            f'{t("wall", locale)} {estimate["dimensions"]["wall_m2"]} m², '
++            f'{t("perimeter", locale)} {estimate["dimensions"]["perimeter_m"]} m'
+         ),
+     ]
+ 
+@@ -61,22 +64,23 @@ def _register_pdf_font():
+     return font_name
+ 
+ 
+-def make_xls(estimate: dict) -> BytesIO:
++def make_xls(estimate: dict, locale: str = DEFAULT_LOCALE) -> BytesIO:
+     import xlwt
+ 
+     workbook = xlwt.Workbook(encoding="utf-8")
+-    sheet = workbook.add_sheet("Kosztorys")
++    sheet = workbook.add_sheet(t("estimate_title", locale))
+     title_style = xlwt.easyxf("font: bold on, height 280")
+     heading_style = xlwt.easyxf("font: bold on")
+-    sheet.write(0, 0, "KOSZTORYS", title_style)
++    sheet.write(0, 0, t("estimate_title", locale).upper(), title_style)
+     sheet.write(0, 1, estimate["job_name"], title_style)
+-    sheet.write(1, 0, "Region")
++    sheet.write(1, 0, t("region", locale))
+     sheet.write(1, 1, estimate["region"])
+-    sheet.write(2, 0, "Powierzchnia")
++    sheet.write(2, 0, t("area", locale))
+     sheet.write(2, 1, f'{estimate["area_m2"]} m²')
+-    for row_index, row in enumerate(_rows(estimate), start=4):
++    heading_markers = {t("materials", locale), t("works", locale), t("item", locale), t("total", locale)}
++    for row_index, row in enumerate(_rows(estimate, locale), start=4):
+         for column_index, value in enumerate(row):
+-            style = heading_style if row and row[0] in {"Materiały", "Robocizna", "Pozycja", "Razem"} else xlwt.easyxf()
++            style = heading_style if row and row[0] in heading_markers else xlwt.easyxf()
+             sheet.write(row_index, column_index, value, style)
+     for column_index, width in enumerate((52, 18, 12, 18, 20)):
+         sheet.col(column_index).width = width * 256
+@@ -86,25 +90,26 @@ def make_xls(estimate: dict) -> BytesIO:
+     return output
+ 
+ 
+-def make_docx(estimate: dict) -> BytesIO:
++def make_docx(estimate: dict, locale: str = DEFAULT_LOCALE) -> BytesIO:
+     from docx import Document
+ 
+     document = Document()
+-    document.add_heading("Kosztorys", level=0)
+-    for index, line in enumerate(_heading_lines(estimate)):
++    document.add_heading(t("estimate_title", locale), level=0)
++    for index, line in enumerate(_heading_lines(estimate, locale)):
+         if index == 0:
+             document.add_heading(line, level=1)
+         else:
+             document.add_paragraph(line)
+-    document.add_heading("Kolejność prac", level=2)
++    document.add_heading(t("sequence", locale), level=2)
+     for step in estimate["sequence"]:
+         document.add_paragraph(step["name"], style="List Number")
+ 
+-    for title, items in (("Materiały", estimate["materials"]), ("Robocizna", estimate["works"])):
++    table_header = [t("item", locale), t("qty", locale), t("unit", locale), t("unit_price", locale), t("line_total", locale)]
++    for title, items in ((t("materials", locale), estimate["materials"]), (t("works", locale), estimate["works"])):
+         document.add_heading(title, level=2)
+         table = document.add_table(rows=1, cols=5)
+         table.style = "Table Grid"
+-        for cell, value in zip(table.rows[0].cells, ["Pozycja", "Ilość", "J.m.", "Cena jedn.", "Wartość"]):
++        for cell, value in zip(table.rows[0].cells, table_header):
+             cell.text = value
+         for item in items:
+             cells = table.add_row().cells
+@@ -116,18 +121,18 @@ def make_docx(estimate: dict) -> BytesIO:
+             for cell, value in zip(cells, values):
+                 cell.text = value
+ 
+-    document.add_heading("Podsumowanie", level=2)
+-    document.add_paragraph(f'Materiały razem: {estimate["materials_total"]} {estimate["currency"]}')
+-    document.add_paragraph(f'Robocizna razem: {estimate["works_total"]} {estimate["currency"]}')
+-    document.add_paragraph(f'Razem: {estimate["total_price"]} {estimate["currency"]}')
+-    document.add_paragraph(f'Szacowany czas: {estimate["estimated_duration_days"]} dni roboczych')
++    document.add_heading(t("total", locale), level=2)
++    document.add_paragraph(f'{t("materials_total", locale)}: {estimate["materials_total"]} {estimate["currency"]}')
++    document.add_paragraph(f'{t("works_total", locale)}: {estimate["works_total"]} {estimate["currency"]}')
++    document.add_paragraph(f'{t("total", locale)}: {estimate["total_price"]} {estimate["currency"]}')
++    document.add_paragraph(f'{t("duration", locale)}: {estimate["estimated_duration_days"]} {t("days", locale)}')
+     output = BytesIO()
+     document.save(output)
+     output.seek(0)
+     return output
+ 
+ 
+-def make_pdf(estimate: dict) -> BytesIO:
++def make_pdf(estimate: dict, locale: str = DEFAULT_LOCALE) -> BytesIO:
+     from reportlab.lib import colors
+     from reportlab.lib.pagesizes import A4
+     from reportlab.lib.styles import getSampleStyleSheet
+@@ -140,16 +145,17 @@ def make_pdf(estimate: dict) -> BytesIO:
+     styles = getSampleStyleSheet()
+     for style in styles.byName.values():
+         style.fontName = font_name
+-    story = [Paragraph("Kosztorys", styles["Title"])]
+-    for line in _heading_lines(estimate):
++    story = [Paragraph(t("estimate_title", locale), styles["Title"])]
++    for line in _heading_lines(estimate, locale):
+         story.append(Paragraph(line, styles["Heading2"] if line == estimate["job_name"] else styles["Normal"]))
+     story.append(Spacer(1, 8))
+-    story.append(Paragraph("Kolejność prac", styles["Heading2"]))
++    story.append(Paragraph(t("sequence", locale), styles["Heading2"]))
+     for index, step in enumerate(estimate["sequence"], start=1):
+         story.append(Paragraph(f"{index}. {step['name']}", styles["Normal"]))
+-    for title, items in (("Materiały", estimate["materials"]), ("Robocizna", estimate["works"])):
++    table_header = [t("item", locale), t("qty", locale), t("unit", locale), t("unit_price", locale), t("line_total", locale)]
++    for title, items in ((t("materials", locale), estimate["materials"]), (t("works", locale), estimate["works"])):
+         story.append(Paragraph(title, styles["Heading2"]))
+-        data = [["Pozycja", "Ilość", "J.m.", "Cena jedn.", "Wartość"]]
++        data = [table_header]
+         data.extend([
+             [item["name"], item["quantity"], item["unit"], f'{item["unit_price"]} {item["currency"]}', f'{item["total"]} {item["currency"]}']
+             for item in items
+@@ -164,12 +170,12 @@ def make_pdf(estimate: dict) -> BytesIO:
+         ]))
+         story.extend([table, Spacer(1, 8)])
+     story.append(Paragraph(
+-        f'Materiały razem: {estimate["materials_total"]} {estimate["currency"]} | '
+-        f'Robocizna razem: {estimate["works_total"]} {estimate["currency"]} | '
+-        f'Razem: {estimate["total_price"]} {estimate["currency"]} | '
+-        f'Szacowany czas: {estimate["estimated_duration_days"]} dni',
++        f'{t("materials_total", locale)}: {estimate["materials_total"]} {estimate["currency"]} | '
++        f'{t("works_total", locale)}: {estimate["works_total"]} {estimate["currency"]} | '
++        f'{t("total", locale)}: {estimate["total_price"]} {estimate["currency"]} | '
++        f'{t("duration", locale)}: {estimate["estimated_duration_days"]} {t("days", locale)}',
+         styles["Heading2"],
+     ))
+     document.build(story)
+     output.seek(0)
+-    return output
+\ No newline at end of file
++    return output
+diff --git a/app/i18n.py b/app/i18n.py
+index a057689..f1d8681 100644
+--- a/app/i18n.py
++++ b/app/i18n.py
+@@ -49,6 +49,7 @@ STRINGS = {
+         "parse_none": "Nie udało się rozpoznać danych z opisu. Uzupełnij pola poniżej ręcznie.",
+         "parse_server_error": "Błąd komunikacji z serwerem. Spróbuj ponownie lub uzupełnij pola ręcznie.",
+         "ai_summary": "Podsumowanie AI",
++        "estimate_title": "Kosztorys",
+     }
+ }
+ 
+@@ -96,6 +97,7 @@ STRINGS["en"] = {
+     "ai_success": "AI matched the work type and area. Check the parameters below and click 'Calculate estimate'.",
+     "ai_error": "Some details could not be recognized. Choose the parameters manually.",
+     "ai_summary": "AI summary",
++    "estimate_title": "Estimate",
+     "parse_empty": "Enter a job description before clicking.",
+     "area_help": "Each item can be calculated for a separate area.",
+     "parse_none": "No details could be recognized. Complete the fields below manually.",
+@@ -146,6 +148,7 @@ STRINGS["ru"] = {
+     "ai_success": "AI определил вид работ и площадь. Проверьте параметры ниже и нажмите «Рассчитать смету». ",
+     "ai_error": "Не все детали удалось распознать. Выберите параметры вручную.",
+     "ai_summary": "Итог от AI",
++    "estimate_title": "Смета",
+     "parse_empty": "Введите описание работы перед нажатием.",
+     "area_help": "Каждую позицию можно рассчитать для отдельной площади.",
+     "parse_none": "Не удалось распознать данные. Заполните поля ниже вручную.",
+diff --git a/app/llm.py b/app/llm.py
+index f2cdde8..dcebcdf 100644
+--- a/app/llm.py
++++ b/app/llm.py
+@@ -27,7 +27,9 @@ def parse_free_text(text: str, job_types: list[dict[str, str]], regions: list[di
+     regions_str = ", ".join([f"'{r['code']}' ({r['name']})" for r in regions])
+ 
+     system_instruction = (
+-        "You are an assistant parsing home renovation requests in Polish or Ukrainian. "
++        "You are an assistant parsing home renovation requests. The user may write in "
++        "Polish, English, Russian, or Ukrainian — detect the language automatically and "
++        "extract the same structured fields regardless of which one it is. "
+         "Extract the type of renovation work, the area in square meters (m²), and the region. "
+         f"The valid job types are: {job_types_str}. "
+         f"The valid region codes are: {regions_str}. "
+diff --git a/app/models.py b/app/models.py
+index b28a39e..66a4d05 100644
+--- a/app/models.py
++++ b/app/models.py
+@@ -65,7 +65,11 @@ class RegionalCoefficient(db.Model):
+     __tablename__ = "regional_coefficients"
+ 
+     id = db.Column(db.Integer, primary_key=True)
+-    region_code = db.Column(db.String(16), unique=True, nullable=False)
++    region_code = db.Column(db.String(32), unique=True, nullable=False)
+     country = db.Column(db.String(2), nullable=False, default="PL")
+     coefficient = db.Column(db.Numeric(8, 4), nullable=False, default=Decimal("1"))
+     name_pl = db.Column(db.String(255), nullable=False)
++    # Grouping for the voivodeship-based region picker (see app/regions_data.py).
++    # Null for the generic national-average fallback row ("pl").
++    voivodeship_code = db.Column(db.String(32), nullable=True)
++    is_capital = db.Column(db.Boolean, nullable=False, default=False)
+diff --git a/app/regions_data.py b/app/regions_data.py
+new file mode 100644
+index 0000000..bfba18f
+--- /dev/null
++++ b/app/regions_data.py
+@@ -0,0 +1,128 @@
++"""Single source of truth for Polish regional pricing granularity.
++
++Why voivodeship + capital, not powiat (district):
++Real Polish kosztorys sources (Sekocenbud included) differentiate regional
++labor rates at the voivodeship level, usually split into "duże miasto"
++(the voivodeship's main city) vs. the rest of the voivodeship — not at the
++powiat level (~380 districts nationwide). Going to powiat granularity would
++mean inventing precise numbers for hundreds of districts with no reliable
++source behind them, which is worse than useful for a tool people build real
++quotes from. This mirrors how professional PL estimating tools actually
++work.
++
++Coefficients below are a calibrated STARTING approximation (relative to a
++1.00 national baseline), grounded in publicly reported regional spreads for
++finishing/construction labor (typically ~10-15% voivodeship-to-voivodeship,
++with an extra premium in the largest agglomerations, Warsaw highest).
++They are placeholders in the same sense as the rest of this project's
++pricing (see data/README.md) — replace with real Sekocenbud regional data
++before relying on this for real client quotes.
++"""
++
++from __future__ import annotations
++
++from dataclasses import dataclass
++from decimal import Decimal
++
++
++@dataclass(frozen=True)
++class Voivodeship:
++    voivodeship_code: str
++    name_pl: str
++    name_en: str
++    name_ru: str
++    capital_region_code: str
++    capital_name_pl: str
++    capital_name_en: str
++    capital_name_ru: str
++    capital_coefficient: Decimal
++    avg_region_code: str
++    avg_coefficient: Decimal
++
++
++# Sorted alphabetically by Polish name — stable, predictable dropdown order
++# for the primary market.
++VOIVODESHIPS: tuple[Voivodeship, ...] = (
++    Voivodeship("dolnoslaskie", "Dolnośląskie", "Lower Silesia", "Нижнесилезское воеводство",
++                "dolnoslaskie_wroclaw", "Wrocław", "Wrocław", "Вроцлав", Decimal("1.18"),
++                "dolnoslaskie_avg", Decimal("1.00")),
++    Voivodeship("kujawsko_pomorskie", "Kujawsko-pomorskie", "Kuyavia-Pomerania", "Куявско-Поморское воеводство",
++                "kujawsko_pomorskie_bydgoszcz", "Bydgoszcz", "Bydgoszcz", "Быдгощ", Decimal("1.00"),
++                "kujawsko_pomorskie_avg", Decimal("0.88")),
++    Voivodeship("lubelskie", "Lubelskie", "Lublin Voivodeship", "Люблинское воеводство",
++                "lubelskie_lublin", "Lublin", "Lublin", "Люблин", Decimal("0.95"),
++                "lubelskie_avg", Decimal("0.82")),
++    Voivodeship("lubuskie", "Lubuskie", "Lubusz Voivodeship", "Любушское воеводство",
++                "lubuskie_zielona_gora", "Zielona Góra", "Zielona Góra", "Зелёна-Гура", Decimal("0.95"),
++                "lubuskie_avg", Decimal("0.88")),
++    Voivodeship("lodzkie", "Łódzkie", "Łódź Voivodeship", "Лодзинское воеводство",
++                "lodzkie_lodz", "Łódź", "Łódź", "Лодзь", Decimal("1.05"),
++                "lodzkie_avg", Decimal("0.90")),
++    Voivodeship("malopolskie", "Małopolskie", "Lesser Poland", "Малопольское воеводство",
++                "malopolskie_krakow", "Kraków", "Kraków", "Краков", Decimal("1.20"),
++                "malopolskie_avg", Decimal("0.95")),
++    Voivodeship("mazowieckie", "Mazowieckie", "Masovia", "Мазовецкое воеводство",
++                "mazowieckie_warszawa", "Warszawa", "Warsaw", "Варшава", Decimal("1.40"),
++                "mazowieckie_avg", Decimal("1.05")),
++    Voivodeship("opolskie", "Opolskie", "Opole Voivodeship", "Опольское воеводство",
++                "opolskie_opole", "Opole", "Opole", "Ополе", Decimal("0.93"),
++                "opolskie_avg", Decimal("0.85")),
++    Voivodeship("podkarpackie", "Podkarpackie", "Subcarpathia", "Подкарпатское воеводство",
++                "podkarpackie_rzeszow", "Rzeszów", "Rzeszów", "Жешув", Decimal("0.93"),
++                "podkarpackie_avg", Decimal("0.80")),
++    Voivodeship("podlaskie", "Podlaskie", "Podlasie", "Подляское воеводство",
++                "podlaskie_bialystok", "Białystok", "Białystok", "Белосток", Decimal("0.95"),
++                "podlaskie_avg", Decimal("0.85")),
++    Voivodeship("pomorskie", "Pomorskie", "Pomerania", "Поморское воеводство",
++                "pomorskie_gdansk", "Gdańsk", "Gdańsk", "Гданьск", Decimal("1.18"),
++                "pomorskie_avg", Decimal("0.95")),
++    Voivodeship("slaskie", "Śląskie", "Silesia", "Силезское воеводство",
++                "slaskie_katowice", "Katowice", "Katowice", "Катовице", Decimal("1.10"),
++                "slaskie_avg", Decimal("0.95")),
++    Voivodeship("swietokrzyskie", "Świętokrzyskie", "Świętokrzyskie Voivodeship", "Свентокшиское воеводство",
++                "swietokrzyskie_kielce", "Kielce", "Kielce", "Кельце", Decimal("0.92"),
++                "swietokrzyskie_avg", Decimal("0.82")),
++    Voivodeship("warminsko_mazurskie", "Warmińsko-mazurskie", "Warmia-Masuria", "Варминьско-Мазурское воеводство",
++                "warminsko_mazurskie_olsztyn", "Olsztyn", "Olsztyn", "Ольштын", Decimal("0.93"),
++                "warminsko_mazurskie_avg", Decimal("0.83")),
++    Voivodeship("wielkopolskie", "Wielkopolskie", "Greater Poland", "Великопольское воеводство",
++                "wielkopolskie_poznan", "Poznań", "Poznań", "Познань", Decimal("1.15"),
++                "wielkopolskie_avg", Decimal("0.95")),
++    Voivodeship("zachodniopomorskie", "Zachodniopomorskie", "West Pomerania", "Западно-Поморское воеводство",
++                "zachodniopomorskie_szczecin", "Szczecin", "Szczecin", "Щецин", Decimal("1.08"),
++                "zachodniopomorskie_avg", Decimal("0.92")),
++)
++
++NATIONAL_FALLBACK_CODE = "pl"
++
++_SUFFIX = {
++    "pl": {"capital": "stolica województwa", "avg": "średnio w województwie", "national": "Polska — średnia krajowa"},
++    "en": {"capital": "voivodeship capital", "avg": "voivodeship average", "national": "Poland — national average"},
++    "ru": {"capital": "столица воеводства", "avg": "в среднем по воеводству", "national": "Польша — среднее по стране"},
++}
++
++
++def _suffix(locale: str, key: str) -> str:
++    bundle = _SUFFIX.get(locale) or _SUFFIX["pl"]
++    return bundle[key]
++
++
++def voivodeship_label(v: Voivodeship, locale: str) -> str:
++    return {"pl": v.name_pl, "en": v.name_en, "ru": v.name_ru}.get(locale, v.name_pl)
++
++
++def capital_label(v: Voivodeship, locale: str) -> str:
++    name = {"pl": v.capital_name_pl, "en": v.capital_name_en, "ru": v.capital_name_ru}.get(locale, v.capital_name_pl)
++    return f"{name} ({_suffix(locale, 'capital')})"
++
++
++def avg_label(v: Voivodeship, locale: str) -> str:
++    return f"{voivodeship_label(v, locale)} — {_suffix(locale, 'avg')}"
++
++
++def national_fallback_label(locale: str) -> str:
++    return _suffix(locale, "national")
++
++
++def find_voivodeship(voivodeship_code: str) -> Voivodeship | None:
++    return next((v for v in VOIVODESHIPS if v.voivodeship_code == voivodeship_code), None)
+diff --git a/app/routes.py b/app/routes.py
+index f1d5954..481d06d 100644
+--- a/app/routes.py
++++ b/app/routes.py
+@@ -12,6 +12,14 @@ from app.area_hints import guess_area_from_text
+ from app.i18n import DEFAULT_LOCALE, SUPPORTED_LOCALES, catalog_name, t
+ from app.llm import parse_free_text, generate_estimate_summary
+ from app.exports import make_docx, make_pdf, make_xls
++from app.regions_data import (
++    NATIONAL_FALLBACK_CODE,
++    VOIVODESHIPS,
++    avg_label,
++    capital_label,
++    national_fallback_label,
++    voivodeship_label,
++)
+ 
+ bp = Blueprint("main", __name__)
+ 
+@@ -78,15 +86,44 @@ def _estimate_from_form():
+     )
+ 
+ 
++def _grouped_regions(regions: list, locale: str) -> tuple[tuple[str, str] | None, list[dict]]:
++    """Build (national_fallback_option, [{label, options: [(code, label)]}...]).
++
++    Only includes voivodeships whose two rows (capital + average) actually
++    exist in the DB, so this degrades gracefully on a not-yet-upgraded dev
++    database instead of rendering half-empty groups.
++    """
++    by_code = {r.region_code: r for r in regions}
++    fallback = None
++    if NATIONAL_FALLBACK_CODE in by_code:
++        fallback = (NATIONAL_FALLBACK_CODE, national_fallback_label(locale))
++
++    groups = []
++    for v in VOIVODESHIPS:
++        if v.capital_region_code not in by_code or v.avg_region_code not in by_code:
++            continue
++        groups.append({
++            "label": voivodeship_label(v, locale),
++            "options": [
++                (v.capital_region_code, capital_label(v, locale)),
++                (v.avg_region_code, avg_label(v, locale)),
++            ],
++        })
++    return fallback, groups
++
++
+ def _form_context(**extra):
+     locale = _locale()
+     job_types = list_job_types()
+     regions = list_regions()
++    region_fallback, region_groups = _grouped_regions(regions, locale)
+     ctx = {
+         "t": lambda key: t(key, locale),
+         "locale": locale,
+         "job_types": job_types,
+         "regions": regions,
++        "region_fallback": region_fallback,
++        "region_groups": region_groups,
+         "catalog_name": lambda code, fallback: catalog_name(code, fallback, locale),
+         "market_options": MARKET_OPTIONS,
+         "currency_options": CURRENCY_OPTIONS,
+@@ -148,15 +185,17 @@ def estimate_api():
+     if not isinstance(data, dict):
+         return jsonify({"error": "Oczekiwano JSON z polami items, region."}), 400
+     try:
++        locale = _locale()
+         items, region = _parse_items(data)
+         estimate = calculate_combined_estimate(
+             items=items,
+             region=region,
+             hours_per_day=current_app.config["LABOR_HOURS_PER_DAY"],
+-            locale=_locale(),
++            locale=locale,
+         )
+-        # Generate friendly LLM summary if key is available
+-        summary = generate_estimate_summary(estimate, locale="pl")
++        # Generate friendly LLM summary in the caller's actual locale, not
++        # hardcoded Polish — this previously ignored ?lang=en/ru entirely.
++        summary = generate_estimate_summary(estimate, locale=locale)
+         estimate["summary"] = summary
+         return jsonify(estimate)
+     except EstimateError as exc:
+@@ -176,7 +215,12 @@ def export_estimate(file_format: str):
+     try:
+         estimate = _estimate_from_form()
+         generator, mimetype, filename = generator_info
+-        return send_file(generator(estimate), as_attachment=True, download_name=filename, mimetype=mimetype)
++        return send_file(
++            generator(estimate, locale=_locale()),
++            as_attachment=True,
++            download_name=filename,
++            mimetype=mimetype,
++        )
+     except EstimateError as exc:
+         return jsonify({"error": str(exc)}), 400
+ 
+diff --git a/app/seed.py b/app/seed.py
+index 2734184..c69444d 100644
+--- a/app/seed.py
++++ b/app/seed.py
+@@ -2,15 +2,68 @@ from decimal import Decimal
+ 
+ from app.extensions import db
+ from app.models import JobType, Material, RegionalCoefficient, Work, WorkNorm
++from app.regions_data import NATIONAL_FALLBACK_CODE, VOIVODESHIPS
+ 
+ 
+ def seed_if_empty() -> None:
+     if JobType.query.first() is not None:
+         ensure_extended_catalog()
++        ensure_regions()
+         return
+     seed()
+ 
+ 
++def ensure_regions() -> None:
++    """Upgrade databases seeded before the voivodeship-level region picker existed.
++
++    Idempotent: only inserts region codes that don't exist yet, never touches
++    coefficients on rows that are already there (so a manually-tuned
++    coefficient someone edited in prod is never silently overwritten).
++    """
++    existing = {row.region_code for row in RegionalCoefficient.query.all()}
++    to_add = _build_region_rows(skip_codes=existing)
++    if to_add:
++        db.session.add_all(to_add)
++        db.session.commit()
++
++
++def _build_region_rows(skip_codes: set[str] = frozenset()) -> list[RegionalCoefficient]:
++    rows: list[RegionalCoefficient] = []
++    if NATIONAL_FALLBACK_CODE not in skip_codes:
++        rows.append(
++            RegionalCoefficient(
++                region_code=NATIONAL_FALLBACK_CODE,
++                country="PL",
++                coefficient=Decimal("1.0000"),
++                name_pl="Polska — średnia krajowa",
++            )
++        )
++    for v in VOIVODESHIPS:
++        if v.capital_region_code not in skip_codes:
++            rows.append(
++                RegionalCoefficient(
++                    region_code=v.capital_region_code,
++                    country="PL",
++                    coefficient=v.capital_coefficient,
++                    name_pl=f"{v.capital_name_pl} (stolica województwa)",
++                    voivodeship_code=v.voivodeship_code,
++                    is_capital=True,
++                )
++            )
++        if v.avg_region_code not in skip_codes:
++            rows.append(
++                RegionalCoefficient(
++                    region_code=v.avg_region_code,
++                    country="PL",
++                    coefficient=v.avg_coefficient,
++                    name_pl=f"{v.name_pl} — średnio w województwie",
++                    voivodeship_code=v.voivodeship_code,
++                    is_capital=False,
++                )
++            )
++    return rows
++
++
+ def ensure_extended_catalog() -> None:
+     """Upgrade databases created before the extended work catalog existed."""
+     job_specs = {
+@@ -565,14 +618,10 @@ def seed() -> None:
+     db.session.add_all(norms)
+ 
+     # -------------------------------------------------------------
+-    # 5. Regional Coefficients
++    # 5. Regional Coefficients (national fallback + 16 voivodeships,
++    #    each split into capital city / voivodeship average — see
++    #    app/regions_data.py for the single source of truth and the
++    #    rationale for this granularity over powiat-level data)
+     # -------------------------------------------------------------
+-    db.session.add(
+-        RegionalCoefficient(
+-            region_code="pl",
+-            country="PL",
+-            coefficient=Decimal("1.0000"),
+-            name_pl="Polska (stawka bazowa)",
+-        )
+-    )
++    db.session.add_all(_build_region_rows())
+     db.session.commit()
+diff --git a/app/templates/index.html b/app/templates/index.html
+index 30de484..e3893e5 100644
+--- a/app/templates/index.html
++++ b/app/templates/index.html
+@@ -69,8 +69,16 @@
+         <label class="block text-sm font-medium text-stone-700">
+           {{ t("region") }}
+           <select id="field_region" name="region" class="mt-1 w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-stone-900 focus:border-orange-800 focus:ring-1 focus:ring-orange-800 focus:outline-none transition-all duration-200">
+-            {% for region in regions %}
+-              <option value="{{ region.region_code }}" {% if form.region == region.region_code %}selected{% endif %}>{{ region.name_pl }}</option>
++            {% if region_fallback %}
++              {% set fallback_code, fallback_label = region_fallback %}
++              <option value="{{ fallback_code }}" {% if form.region == fallback_code %}selected{% endif %}>{{ fallback_label }}</option>
++            {% endif %}
++            {% for group in region_groups %}
++              <optgroup label="{{ group.label }}">
++                {% for code, label in group.options %}
++                  <option value="{{ code }}" {% if form.region == code %}selected{% endif %}>{{ label }}</option>
++                {% endfor %}
++              </optgroup>
+             {% endfor %}
+           </select>
+         </label>
+diff --git a/tests/test_api.py b/tests/test_api.py
+index f8c0630..b854681 100644
+--- a/tests/test_api.py
++++ b/tests/test_api.py
+@@ -133,4 +133,46 @@ def test_pdf_export_preserves_polish_characters(tmp_path):
+     assert response.status_code == 200
+     assert "Materiały" in text
+     assert "Kolejność prac" in text
+-    assert "ściany" in text
++
++
++def test_pdf_export_respects_selected_locale(tmp_path):
++    # Regression test: exports used to be hardcoded to Polish regardless of
++    # the site's selected language, so an EN/RU user downloading their
++    # estimate got a Polish document. The export must follow ?lang / the
++    # session locale, same as the web page does.
++    class Cfg(FileConfig):
++        SQLALCHEMY_DATABASE_URI = f"sqlite:///{tmp_path / 'test.db'}"
++
++    client = create_app(Cfg).test_client()
++    client.get("/language/en")
++    response = client.post(
++        "/estimate/export/pdf",
++        data={"job_type": "bathroom_tiling", "area_m2": "4", "region": "pl"},
++    )
++
++    from pypdf import PdfReader
++
++    text = "\n".join(page.extract_text() or "" for page in PdfReader(BytesIO(response.data)).pages)
++    assert response.status_code == 200
++    assert "Materials" in text
++    assert "Materiały" not in text
++
++
++def test_docx_export_respects_selected_locale(tmp_path):
++    class Cfg(FileConfig):
++        SQLALCHEMY_DATABASE_URI = f"sqlite:///{tmp_path / 'test.db'}"
++
++    client = create_app(Cfg).test_client()
++    client.get("/language/ru")
++    response = client.post(
++        "/estimate/export/docx",
++        data={"job_type": "bathroom_tiling", "area_m2": "4", "region": "pl"},
++    )
++
++    from docx import Document
++
++    doc = Document(BytesIO(response.data))
++    full_text = "\n".join(p.text for p in doc.paragraphs)
++    assert response.status_code == 200
++    assert "Материалы" in full_text
++    assert "Robocizna" not in full_text
+diff --git a/tests/test_llm.py b/tests/test_llm.py
+index 823cd2f..a5a002e 100644
+--- a/tests/test_llm.py
++++ b/tests/test_llm.py
+@@ -115,3 +115,20 @@ def test_api_estimate_with_mocked_summary(client):
+         payload = response.get_json()
+         assert payload["summary"] == "This is a beautifully mocked summary."
+         mock_summary.assert_called_once()
++
++
++def test_api_estimate_summary_uses_the_requested_locale(client):
++    # Regression test: /api/estimate used to call generate_estimate_summary
++    # with locale hardcoded to "pl" no matter what the caller asked for, so
++    # an English or Russian client never got a summary in their language.
++    with patch("app.routes.generate_estimate_summary") as mock_summary:
++        mock_summary.return_value = "mocked"
++
++        client.get("/language/en")
++        client.post(
++            "/api/estimate",
++            json={"job_type": "bathroom_tiling", "area_m2": 4, "region": "pl"},
++        )
++
++        _, kwargs = mock_summary.call_args
++        assert kwargs.get("locale") == "en"
+diff --git a/tests/test_regions.py b/tests/test_regions.py
+new file mode 100644
+index 0000000..9bffd4c
+--- /dev/null
++++ b/tests/test_regions.py
+@@ -0,0 +1,92 @@
++import pytest
++
++from app.config import Config
++from app import create_app
++from app.models import RegionalCoefficient
++from app.regions_data import VOIVODESHIPS
++
++
++class FileConfig(Config):
++    TESTING = True
++    SECRET_KEY = "test"
++
++
++@pytest.fixture
++def app_(tmp_path):
++    class Cfg(FileConfig):
++        SQLALCHEMY_DATABASE_URI = f"sqlite:///{tmp_path / 'test.db'}"
++    return create_app(Cfg)
++
++
++def test_seeds_national_fallback_plus_all_voivodeships(app_):
++    with app_.app_context():
++        # 1 national fallback ("pl") + 16 voivodeships x (capital + average)
++        assert RegionalCoefficient.query.count() == 1 + len(VOIVODESHIPS) * 2
++        for v in VOIVODESHIPS:
++            capital = RegionalCoefficient.query.filter_by(region_code=v.capital_region_code).one()
++            avg = RegionalCoefficient.query.filter_by(region_code=v.avg_region_code).one()
++            assert capital.is_capital is True
++            assert avg.is_capital is False
++            assert capital.voivodeship_code == v.voivodeship_code == avg.voivodeship_code
++            # A voivodeship's capital should never be priced below its own
++            # average — that would contradict the whole point of splitting
++            # them out.
++            assert capital.coefficient >= avg.coefficient
++
++
++def test_warsaw_is_the_most_expensive_region(app_):
++    with app_.app_context():
++        all_coeffs = {r.region_code: r.coefficient for r in RegionalCoefficient.query.all()}
++        assert all_coeffs["mazowieckie_warszawa"] == max(all_coeffs.values())
++
++
++def test_same_job_prices_differently_by_region(app_):
++    client = app_.test_client()
++    warsaw = client.post(
++        "/api/estimate",
++        json={"job_type": "bathroom_tiling", "area_m2": 4, "region": "mazowieckie_warszawa"},
++    ).get_json()
++    cheapest_avg = client.post(
++        "/api/estimate",
++        json={"job_type": "bathroom_tiling", "area_m2": 4, "region": "podkarpackie_avg"},
++    ).get_json()
++    assert float(warsaw["total_price"]) > float(cheapest_avg["total_price"])
++
++
++def test_unknown_region_still_rejected(app_):
++    client = app_.test_client()
++    response = client.post(
++        "/api/estimate",
++        json={"job_type": "bathroom_tiling", "area_m2": 4, "region": "atlantis"},
++    )
++    assert response.status_code == 400
++
++
++def test_region_dropdown_has_one_optgroup_per_voivodeship(app_):
++    client = app_.test_client()
++    html = client.get("/").data.decode()
++    for v in VOIVODESHIPS:
++        assert f'<optgroup label="{v.name_pl}">' in html
++    # National fallback stays a plain top-level option, not inside a group.
++    assert 'value="pl"' in html
++
++
++def test_ensure_regions_is_idempotent_and_never_overwrites_existing_coefficient(app_):
++    # Simulates upgrading a database that was seeded before this feature
++    # existed: JobType rows are already there, so seed_if_empty() takes the
++    # "ensure_*" upgrade path instead of a full reseed.
++    from app.seed import ensure_regions
++    with app_.app_context():
++        row = RegionalCoefficient.query.filter_by(region_code="mazowieckie_warszawa").one()
++        row.coefficient = row.coefficient  # noqa: PLW0127 — no-op, just reading it below
++        from decimal import Decimal
++        row.coefficient = Decimal("9.9999")  # simulate a manually-tuned value
++        from app.extensions import db
++        db.session.commit()
++
++        ensure_regions()
++
++        reloaded = RegionalCoefficient.query.filter_by(region_code="mazowieckie_warszawa").one()
++        assert reloaded.coefficient == Decimal("9.9999")
++        # Still exactly one row per code — ensure_regions must not duplicate.
++        assert RegionalCoefficient.query.filter_by(region_code="mazowieckie_warszawa").count() == 1
+-- 
+2.43.0
+

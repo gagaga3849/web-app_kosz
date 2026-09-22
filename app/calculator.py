@@ -4,7 +4,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 from math import ceil
-from typing import Any
+from typing import Any, Union
 
 from app.models import JobType, RegionalCoefficient, WorkNorm
 from app.i18n import catalog_name
@@ -62,7 +62,7 @@ def _qty_base(job: JobType, area_m2: Decimal, applies_to: str) -> Decimal:
 def calculate_estimate(
     *,
     job_type: str,
-    area_m2: Decimal | float | str,
+    area_m2: Union[Decimal, float, str],
     region: str,
     hours_per_day: int = 8,
     locale: str = "pl",

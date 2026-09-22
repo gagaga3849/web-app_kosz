@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from typing import Optional
 
 # code: (typical_area_m2, human label shown to the user, list of keywords/aliases)
 SPACE_DEFAULTS: list[tuple[float, str, list[str]]] = [
@@ -37,7 +38,7 @@ def _normalize(text: str) -> str:
     return re.sub(r"[^a-z0-9\s]", " ", stripped)
 
 
-def guess_area_from_text(text: str) -> dict | None:
+def guess_area_from_text(text: str) -> Optional[dict]:
     """Return {"area_m2": float, "label": str} for the first matching space
     keyword found in the text, or None if nothing matched.
     Word-boundary matching only, so 'salonik' style substrings inside longer

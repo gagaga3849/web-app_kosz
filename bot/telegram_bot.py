@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, Optional
 
 import httpx
 from aiogram import Bot, Dispatcher, Router
@@ -17,7 +17,7 @@ JsonRequest = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]
 class TelegramApiClient:
     """HTTP client for the existing parse-and-estimate API endpoints."""
 
-    def __init__(self, base_url: str, request: JsonRequest | None = None) -> None:
+    def __init__(self, base_url: str, request: Optional[JsonRequest] = None) -> None:
         self.base_url = base_url.rstrip("/")
         self._request = request or self._request_json
 

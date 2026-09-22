@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -113,7 +114,7 @@ def voivodeship_label(v: Voivodeship, locale: str) -> str:
 
 def capital_label(v: Voivodeship, locale: str) -> str:
     name = {"pl": v.capital_name_pl, "en": v.capital_name_en, "ru": v.capital_name_ru}.get(locale, v.capital_name_pl)
-    return f"{name} ({_suffix(locale, 'capital')})"
+    return name
 
 
 def avg_label(v: Voivodeship, locale: str) -> str:
@@ -124,5 +125,5 @@ def national_fallback_label(locale: str) -> str:
     return _suffix(locale, "national")
 
 
-def find_voivodeship(voivodeship_code: str) -> Voivodeship | None:
+def find_voivodeship(voivodeship_code: str) -> Optional[Voivodeship]:
     return next((v for v in VOIVODESHIPS if v.voivodeship_code == voivodeship_code), None)

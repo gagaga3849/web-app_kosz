@@ -65,7 +65,11 @@ class RegionalCoefficient(db.Model):
     __tablename__ = "regional_coefficients"
 
     id = db.Column(db.Integer, primary_key=True)
-    region_code = db.Column(db.String(16), unique=True, nullable=False)
+    region_code = db.Column(db.String(32), unique=True, nullable=False)
     country = db.Column(db.String(2), nullable=False, default="PL")
     coefficient = db.Column(db.Numeric(8, 4), nullable=False, default=Decimal("1"))
     name_pl = db.Column(db.String(255), nullable=False)
+    # Grouping for the voivodeship-based region picker (see app/regions_data.py).
+    # Null for the generic national-average fallback row ("pl").
+    voivodeship_code = db.Column(db.String(32), nullable=True)
+    is_capital = db.Column(db.Boolean, nullable=False, default=False)

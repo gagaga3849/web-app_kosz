@@ -115,3 +115,20 @@ def test_api_estimate_with_mocked_summary(client):
         payload = response.get_json()
         assert payload["summary"] == "This is a beautifully mocked summary."
         mock_summary.assert_called_once()
+
+
+def test_api_estimate_summary_uses_the_requested_locale(client):
+    # Regression test: /api/estimate used to call generate_estimate_summary
+    # with locale hardcoded to "pl" no matter what the caller asked for, so
+    # an English or Russian client never got a summary in their language.
+    with patch("app.routes.generate_estimate_summary") as mock_summary:
+        mock_summary.return_value = "mocked"
+
+        client.get("/language/en")
+        client.post(
+            "/api/estimate",
+            json={"job_type": "bathroom_tiling", "area_m2": 4, "region": "pl"},
+        )
+
+        _, kwargs = mock_summary.call_args
+        assert kwargs.get("locale") == "en"

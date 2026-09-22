@@ -12,6 +12,14 @@ from app.area_hints import guess_area_from_text
 from app.i18n import DEFAULT_LOCALE, SUPPORTED_LOCALES, catalog_name, t
 from app.llm import parse_free_text, generate_estimate_summary
 from app.exports import make_docx, make_pdf, make_xls
+from app.regions_data import (
+    NATIONAL_FALLBACK_CODE,
+    VOIVODESHIPS,
+    avg_label,
+    capital_label,
+    national_fallback_label,
+    voivodeship_label,
+)
 
 bp = Blueprint("main", __name__)
 
@@ -78,15 +86,44 @@ def _estimate_from_form():
     )
 
 
+def _grouped_regions(regions: list, locale: str) -> tuple[tuple[str, str] | None, list[dict]]:
+    """Build (national_fallback_option, [{label, options: [(code, label)]}...]).
+
+    Only includes voivodeships whose two rows (capital + average) actually
+    exist in the DB, so this degrades gracefully on a not-yet-upgraded dev
+    database instead of rendering half-empty groups.
+    """
+    by_code = {r.region_code: r for r in regions}
+    fallback = None
+    if NATIONAL_FALLBACK_CODE in by_code:
+        fallback = (NATIONAL_FALLBACK_CODE, national_fallback_label(locale))
+
+    groups = []
+    for v in VOIVODESHIPS:
+        if v.capital_region_code not in by_code or v.avg_region_code not in by_code:
+            continue
+        groups.append({
+            "label": voivodeship_label(v, locale),
+            "options": [
+                (v.capital_region_code, capital_label(v, locale)),
+                (v.avg_region_code, avg_label(v, locale)),
+            ],
+        })
+    return fallback, groups
+
+
 def _form_context(**extra):
     locale = _locale()
     job_types = list_job_types()
     regions = list_regions()
+    region_fallback, region_groups = _grouped_regions(regions, locale)
     ctx = {
         "t": lambda key: t(key, locale),
         "locale": locale,
         "job_types": job_types,
         "regions": regions,
+        "region_fallback": region_fallback,
+        "region_groups": region_groups,
         "catalog_name": lambda code, fallback: catalog_name(code, fallback, locale),
         "market_options": MARKET_OPTIONS,
         "currency_options": CURRENCY_OPTIONS,
@@ -148,15 +185,17 @@ def estimate_api():
     if not isinstance(data, dict):
         return jsonify({"error": "Oczekiwano JSON z polami items, region."}), 400
     try:
+        locale = _locale()
         items, region = _parse_items(data)
         estimate = calculate_combined_estimate(
             items=items,
             region=region,
             hours_per_day=current_app.config["LABOR_HOURS_PER_DAY"],
-            locale=_locale(),
+            locale=locale,
         )
-        # Generate friendly LLM summary if key is available
-        summary = generate_estimate_summary(estimate, locale="pl")
+        # Generate friendly LLM summary in the caller's actual locale, not
+        # hardcoded Polish — this previously ignored ?lang=en/ru entirely.
+        summary = generate_estimate_summary(estimate, locale=locale)
         estimate["summary"] = summary
         return jsonify(estimate)
     except EstimateError as exc:
@@ -176,7 +215,12 @@ def export_estimate(file_format: str):
     try:
         estimate = _estimate_from_form()
         generator, mimetype, filename = generator_info
-        return send_file(generator(estimate), as_attachment=True, download_name=filename, mimetype=mimetype)
+        return send_file(
+            generator(estimate, locale=_locale()),
+            as_attachment=True,
+            download_name=filename,
+            mimetype=mimetype,
+        )
     except EstimateError as exc:
         return jsonify({"error": str(exc)}), 400
 

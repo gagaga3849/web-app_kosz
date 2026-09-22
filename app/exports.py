@@ -3,16 +3,19 @@ from __future__ import annotations
 from io import BytesIO
 from pathlib import Path
 
+from app.i18n import DEFAULT_LOCALE, t
 
-def _rows(estimate: dict) -> list[list[str]]:
-    rows = [["Materiały"], ["Pozycja", "Ilość", "J.m.", "Cena jedn.", "Wartość"]]
+
+def _rows(estimate: dict, locale: str) -> list[list[str]]:
+    materials_header = [t("item", locale), t("qty", locale), t("unit", locale), t("unit_price", locale), t("line_total", locale)]
+    rows = [[t("materials", locale)], materials_header]
     for item in estimate["materials"]:
         rows.append([
             item["name"], item["quantity"], item["unit"],
             f'{item["unit_price"]} {item["currency"]}',
             f'{item["total"]} {item["currency"]}',
         ])
-    rows.extend([["Robocizna"], ["Pozycja", "Ilość", "J.m.", "Cena jedn.", "Wartość"]])
+    rows.extend([[t("works", locale)], materials_header])
     for item in estimate["works"]:
         rows.append([
             item["name"], item["quantity"], item["unit"],
@@ -20,23 +23,23 @@ def _rows(estimate: dict) -> list[list[str]]:
             f'{item["total"]} {item["currency"]}',
         ])
     rows.extend([
-        [], ["Materiały razem", f'{estimate["materials_total"]} {estimate["currency"]}'],
-        ["Robocizna razem", f'{estimate["works_total"]} {estimate["currency"]}'],
-        ["Razem", f'{estimate["total_price"]} {estimate["currency"]}'],
-        ["Szacowany czas", f'{estimate["estimated_duration_days"]} dni roboczych'],
+        [], [t("materials_total", locale), f'{estimate["materials_total"]} {estimate["currency"]}'],
+        [t("works_total", locale), f'{estimate["works_total"]} {estimate["currency"]}'],
+        [t("total", locale), f'{estimate["total_price"]} {estimate["currency"]}'],
+        [t("duration", locale), f'{estimate["estimated_duration_days"]} {t("days", locale)}'],
     ])
     return rows
 
 
-def _heading_lines(estimate: dict) -> list[str]:
+def _heading_lines(estimate: dict, locale: str) -> list[str]:
     return [
         estimate["job_name"],
-        f'Powierzchnia: {estimate["area_m2"]} m² | Region: {estimate["region"]}',
+        f'{t("area", locale)}: {estimate["area_m2"]} m² | {t("region", locale)}: {estimate["region"]}',
         (
-            "Wymiary: "
-            f'podłoga {estimate["dimensions"]["floor_m2"]} m², '
-            f'ściany {estimate["dimensions"]["wall_m2"]} m², '
-            f'obwód {estimate["dimensions"]["perimeter_m"]} m'
+            f'{t("dimensions", locale)}: '
+            f'{t("floor", locale)} {estimate["dimensions"]["floor_m2"]} m², '
+            f'{t("wall", locale)} {estimate["dimensions"]["wall_m2"]} m², '
+            f'{t("perimeter", locale)} {estimate["dimensions"]["perimeter_m"]} m'
         ),
     ]
 
@@ -61,22 +64,23 @@ def _register_pdf_font():
     return font_name
 
 
-def make_xls(estimate: dict) -> BytesIO:
+def make_xls(estimate: dict, locale: str = DEFAULT_LOCALE) -> BytesIO:
     import xlwt
 
     workbook = xlwt.Workbook(encoding="utf-8")
-    sheet = workbook.add_sheet("Kosztorys")
+    sheet = workbook.add_sheet(t("estimate_title", locale))
     title_style = xlwt.easyxf("font: bold on, height 280")
     heading_style = xlwt.easyxf("font: bold on")
-    sheet.write(0, 0, "KOSZTORYS", title_style)
+    sheet.write(0, 0, t("estimate_title", locale).upper(), title_style)
     sheet.write(0, 1, estimate["job_name"], title_style)
-    sheet.write(1, 0, "Region")
+    sheet.write(1, 0, t("region", locale))
     sheet.write(1, 1, estimate["region"])
-    sheet.write(2, 0, "Powierzchnia")
+    sheet.write(2, 0, t("area", locale))
     sheet.write(2, 1, f'{estimate["area_m2"]} m²')
-    for row_index, row in enumerate(_rows(estimate), start=4):
+    heading_markers = {t("materials", locale), t("works", locale), t("item", locale), t("total", locale)}
+    for row_index, row in enumerate(_rows(estimate, locale), start=4):
         for column_index, value in enumerate(row):
-            style = heading_style if row and row[0] in {"Materiały", "Robocizna", "Pozycja", "Razem"} else xlwt.easyxf()
+            style = heading_style if row and row[0] in heading_markers else xlwt.easyxf()
             sheet.write(row_index, column_index, value, style)
     for column_index, width in enumerate((52, 18, 12, 18, 20)):
         sheet.col(column_index).width = width * 256
@@ -86,25 +90,26 @@ def make_xls(estimate: dict) -> BytesIO:
     return output
 
 
-def make_docx(estimate: dict) -> BytesIO:
+def make_docx(estimate: dict, locale: str = DEFAULT_LOCALE) -> BytesIO:
     from docx import Document
 
     document = Document()
-    document.add_heading("Kosztorys", level=0)
-    for index, line in enumerate(_heading_lines(estimate)):
+    document.add_heading(t("estimate_title", locale), level=0)
+    for index, line in enumerate(_heading_lines(estimate, locale)):
         if index == 0:
             document.add_heading(line, level=1)
         else:
             document.add_paragraph(line)
-    document.add_heading("Kolejność prac", level=2)
+    document.add_heading(t("sequence", locale), level=2)
     for step in estimate["sequence"]:
         document.add_paragraph(step["name"], style="List Number")
 
-    for title, items in (("Materiały", estimate["materials"]), ("Robocizna", estimate["works"])):
+    table_header = [t("item", locale), t("qty", locale), t("unit", locale), t("unit_price", locale), t("line_total", locale)]
+    for title, items in ((t("materials", locale), estimate["materials"]), (t("works", locale), estimate["works"])):
         document.add_heading(title, level=2)
         table = document.add_table(rows=1, cols=5)
         table.style = "Table Grid"
-        for cell, value in zip(table.rows[0].cells, ["Pozycja", "Ilość", "J.m.", "Cena jedn.", "Wartość"]):
+        for cell, value in zip(table.rows[0].cells, table_header):
             cell.text = value
         for item in items:
             cells = table.add_row().cells
@@ -116,18 +121,18 @@ def make_docx(estimate: dict) -> BytesIO:
             for cell, value in zip(cells, values):
                 cell.text = value
 
-    document.add_heading("Podsumowanie", level=2)
-    document.add_paragraph(f'Materiały razem: {estimate["materials_total"]} {estimate["currency"]}')
-    document.add_paragraph(f'Robocizna razem: {estimate["works_total"]} {estimate["currency"]}')
-    document.add_paragraph(f'Razem: {estimate["total_price"]} {estimate["currency"]}')
-    document.add_paragraph(f'Szacowany czas: {estimate["estimated_duration_days"]} dni roboczych')
+    document.add_heading(t("total", locale), level=2)
+    document.add_paragraph(f'{t("materials_total", locale)}: {estimate["materials_total"]} {estimate["currency"]}')
+    document.add_paragraph(f'{t("works_total", locale)}: {estimate["works_total"]} {estimate["currency"]}')
+    document.add_paragraph(f'{t("total", locale)}: {estimate["total_price"]} {estimate["currency"]}')
+    document.add_paragraph(f'{t("duration", locale)}: {estimate["estimated_duration_days"]} {t("days", locale)}')
     output = BytesIO()
     document.save(output)
     output.seek(0)
     return output
 
 
-def make_pdf(estimate: dict) -> BytesIO:
+def make_pdf(estimate: dict, locale: str = DEFAULT_LOCALE) -> BytesIO:
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import getSampleStyleSheet
@@ -140,16 +145,17 @@ def make_pdf(estimate: dict) -> BytesIO:
     styles = getSampleStyleSheet()
     for style in styles.byName.values():
         style.fontName = font_name
-    story = [Paragraph("Kosztorys", styles["Title"])]
-    for line in _heading_lines(estimate):
+    story = [Paragraph(t("estimate_title", locale), styles["Title"])]
+    for line in _heading_lines(estimate, locale):
         story.append(Paragraph(line, styles["Heading2"] if line == estimate["job_name"] else styles["Normal"]))
     story.append(Spacer(1, 8))
-    story.append(Paragraph("Kolejność prac", styles["Heading2"]))
+    story.append(Paragraph(t("sequence", locale), styles["Heading2"]))
     for index, step in enumerate(estimate["sequence"], start=1):
         story.append(Paragraph(f"{index}. {step['name']}", styles["Normal"]))
-    for title, items in (("Materiały", estimate["materials"]), ("Robocizna", estimate["works"])):
+    table_header = [t("item", locale), t("qty", locale), t("unit", locale), t("unit_price", locale), t("line_total", locale)]
+    for title, items in ((t("materials", locale), estimate["materials"]), (t("works", locale), estimate["works"])):
         story.append(Paragraph(title, styles["Heading2"]))
-        data = [["Pozycja", "Ilość", "J.m.", "Cena jedn.", "Wartość"]]
+        data = [table_header]
         data.extend([
             [item["name"], item["quantity"], item["unit"], f'{item["unit_price"]} {item["currency"]}', f'{item["total"]} {item["currency"]}']
             for item in items
@@ -164,10 +170,10 @@ def make_pdf(estimate: dict) -> BytesIO:
         ]))
         story.extend([table, Spacer(1, 8)])
     story.append(Paragraph(
-        f'Materiały razem: {estimate["materials_total"]} {estimate["currency"]} | '
-        f'Robocizna razem: {estimate["works_total"]} {estimate["currency"]} | '
-        f'Razem: {estimate["total_price"]} {estimate["currency"]} | '
-        f'Szacowany czas: {estimate["estimated_duration_days"]} dni',
+        f'{t("materials_total", locale)}: {estimate["materials_total"]} {estimate["currency"]} | '
+        f'{t("works_total", locale)}: {estimate["works_total"]} {estimate["currency"]} | '
+        f'{t("total", locale)}: {estimate["total_price"]} {estimate["currency"]} | '
+        f'{t("duration", locale)}: {estimate["estimated_duration_days"]} {t("days", locale)}',
         styles["Heading2"],
     ))
     document.build(story)

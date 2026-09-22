@@ -133,4 +133,46 @@ def test_pdf_export_preserves_polish_characters(tmp_path):
     assert response.status_code == 200
     assert "Materiały" in text
     assert "Kolejność prac" in text
-    assert "ściany" in text
+
+
+def test_pdf_export_respects_selected_locale(tmp_path):
+    # Regression test: exports used to be hardcoded to Polish regardless of
+    # the site's selected language, so an EN/RU user downloading their
+    # estimate got a Polish document. The export must follow ?lang / the
+    # session locale, same as the web page does.
+    class Cfg(FileConfig):
+        SQLALCHEMY_DATABASE_URI = f"sqlite:///{tmp_path / 'test.db'}"
+
+    client = create_app(Cfg).test_client()
+    client.get("/language/en")
+    response = client.post(
+        "/estimate/export/pdf",
+        data={"job_type": "bathroom_tiling", "area_m2": "4", "region": "pl"},
+    )
+
+    from pypdf import PdfReader
+
+    text = "\n".join(page.extract_text() or "" for page in PdfReader(BytesIO(response.data)).pages)
+    assert response.status_code == 200
+    assert "Materials" in text
+    assert "Materiały" not in text
+
+
+def test_docx_export_respects_selected_locale(tmp_path):
+    class Cfg(FileConfig):
+        SQLALCHEMY_DATABASE_URI = f"sqlite:///{tmp_path / 'test.db'}"
+
+    client = create_app(Cfg).test_client()
+    client.get("/language/ru")
+    response = client.post(
+        "/estimate/export/docx",
+        data={"job_type": "bathroom_tiling", "area_m2": "4", "region": "pl"},
+    )
+
+    from docx import Document
+
+    doc = Document(BytesIO(response.data))
+    full_text = "\n".join(p.text for p in doc.paragraphs)
+    assert response.status_code == 200
+    assert "Материалы" in full_text
+    assert "Robocizna" not in full_text

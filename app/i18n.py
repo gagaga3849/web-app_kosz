@@ -49,6 +49,7 @@ STRINGS = {
         "parse_none": "Nie udało się rozpoznać danych z opisu. Uzupełnij pola poniżej ręcznie.",
         "parse_server_error": "Błąd komunikacji z serwerem. Spróbuj ponownie lub uzupełnij pola ręcznie.",
         "ai_summary": "Podsumowanie AI",
+        "estimate_title": "Kosztorys",
     }
 }
 
@@ -96,6 +97,7 @@ STRINGS["en"] = {
     "ai_success": "AI matched the work type and area. Check the parameters below and click 'Calculate estimate'.",
     "ai_error": "Some details could not be recognized. Choose the parameters manually.",
     "ai_summary": "AI summary",
+    "estimate_title": "Estimate",
     "parse_empty": "Enter a job description before clicking.",
     "area_help": "Each item can be calculated for a separate area.",
     "parse_none": "No details could be recognized. Complete the fields below manually.",
@@ -146,6 +148,7 @@ STRINGS["ru"] = {
     "ai_success": "AI определил вид работ и площадь. Проверьте параметры ниже и нажмите «Рассчитать смету». ",
     "ai_error": "Не все детали удалось распознать. Выберите параметры вручную.",
     "ai_summary": "Итог от AI",
+    "estimate_title": "Смета",
     "parse_empty": "Введите описание работы перед нажатием.",
     "area_help": "Каждую позицию можно рассчитать для отдельной площади.",
     "parse_none": "Не удалось распознать данные. Заполните поля ниже вручную.",

@@ -2,13 +2,66 @@ from decimal import Decimal
 
 from app.extensions import db
 from app.models import JobType, Material, RegionalCoefficient, Work, WorkNorm
+from app.regions_data import NATIONAL_FALLBACK_CODE, VOIVODESHIPS
 
 
 def seed_if_empty() -> None:
     if JobType.query.first() is not None:
         ensure_extended_catalog()
+        ensure_regions()
         return
     seed()
+
+
+def ensure_regions() -> None:
+    """Upgrade databases seeded before the voivodeship-level region picker existed.
+
+    Idempotent: only inserts region codes that don't exist yet, never touches
+    coefficients on rows that are already there (so a manually-tuned
+    coefficient someone edited in prod is never silently overwritten).
+    """
+    existing = {row.region_code for row in RegionalCoefficient.query.all()}
+    to_add = _build_region_rows(skip_codes=existing)
+    if to_add:
+        db.session.add_all(to_add)
+        db.session.commit()
+
+
+def _build_region_rows(skip_codes: set[str] = frozenset()) -> list[RegionalCoefficient]:
+    rows: list[RegionalCoefficient] = []
+    if NATIONAL_FALLBACK_CODE not in skip_codes:
+        rows.append(
+            RegionalCoefficient(
+                region_code=NATIONAL_FALLBACK_CODE,
+                country="PL",
+                coefficient=Decimal("1.0000"),
+                name_pl="Polska — średnia krajowa",
+            )
+        )
+    for v in VOIVODESHIPS:
+        if v.capital_region_code not in skip_codes:
+            rows.append(
+                RegionalCoefficient(
+                    region_code=v.capital_region_code,
+                    country="PL",
+                    coefficient=v.capital_coefficient,
+                    name_pl=f"{v.capital_name_pl} (stolica województwa)",
+                    voivodeship_code=v.voivodeship_code,
+                    is_capital=True,
+                )
+            )
+        if v.avg_region_code not in skip_codes:
+            rows.append(
+                RegionalCoefficient(
+                    region_code=v.avg_region_code,
+                    country="PL",
+                    coefficient=v.avg_coefficient,
+                    name_pl=f"{v.name_pl} — średnio w województwie",
+                    voivodeship_code=v.voivodeship_code,
+                    is_capital=False,
+                )
+            )
+    return rows
 
 
 def ensure_extended_catalog() -> None:
@@ -565,14 +618,10 @@ def seed() -> None:
     db.session.add_all(norms)
 
     # -------------------------------------------------------------
-    # 5. Regional Coefficients
+    # 5. Regional Coefficients (national fallback + 16 voivodeships,
+    #    each split into capital city / voivodeship average — see
+    #    app/regions_data.py for the single source of truth and the
+    #    rationale for this granularity over powiat-level data)
     # -------------------------------------------------------------
-    db.session.add(
-        RegionalCoefficient(
-            region_code="pl",
-            country="PL",
-            coefficient=Decimal("1.0000"),
-            name_pl="Polska (stawka bazowa)",
-        )
-    )
+    db.session.add_all(_build_region_rows())
     db.session.commit()

@@ -69,8 +69,16 @@
         <label class="block text-sm font-medium text-stone-700">
           {{ t("region") }}
           <select id="field_region" name="region" class="mt-1 w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-stone-900 focus:border-orange-800 focus:ring-1 focus:ring-orange-800 focus:outline-none transition-all duration-200">
-            {% for region in regions %}
-              <option value="{{ region.region_code }}" {% if form.region == region.region_code %}selected{% endif %}>{{ region.name_pl }}</option>
+            {% if region_fallback %}
+              {% set fallback_code, fallback_label = region_fallback %}
+              <option value="{{ fallback_code }}" {% if form.region == fallback_code %}selected{% endif %}>{{ fallback_label }}</option>
+            {% endif %}
+            {% for group in region_groups %}
+              <optgroup label="{{ group.label }}">
+                {% for code, label in group.options %}
+                  <option value="{{ code }}" {% if form.region == code %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </optgroup>
             {% endfor %}
           </select>
         </label>

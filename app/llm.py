@@ -27,7 +27,9 @@ def parse_free_text(text: str, job_types: list[dict[str, str]], regions: list[di
     regions_str = ", ".join([f"'{r['code']}' ({r['name']})" for r in regions])
 
     system_instruction = (
-        "You are an assistant parsing home renovation requests in Polish or Ukrainian. "
+        "You are an assistant parsing home renovation requests. The user may write in "
+        "Polish, English, Russian, or Ukrainian — detect the language automatically and "
+        "extract the same structured fields regardless of which one it is. "
         "Extract the type of renovation work, the area in square meters (m²), and the region. "
         f"The valid job types are: {job_types_str}. "
         f"The valid region codes are: {regions_str}. "
